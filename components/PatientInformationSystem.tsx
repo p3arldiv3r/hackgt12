@@ -1,434 +1,477 @@
 "use client";
 
-import React, { useState } from 'react';
-import Image from 'next/image';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer } from 'recharts';
+import React, { useState } from "react";
+import Image from "next/image";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  LineChart,
+  Line,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
 
-// Sample patient data - you'd replace this with your real data
-const patientData = [
-  { region: 'head', x: 100, y: 50, severity: 3, symptoms: ['headache', 'dizziness'], duration: '3 days' },
-  { region: 'chest', x: 100, y: 120, severity: 5, symptoms: ['chest pain', 'shortness of breath'], duration: '1 week' },
-  { region: 'leftShoulder', x: 70, y: 100, severity: 2, symptoms: ['stiffness'], duration: '2 weeks' },
-  { region: 'rightKnee', x: 110, y: 280, severity: 4, symptoms: ['pain', 'swelling'], duration: '5 days' },
-  { region: 'abdomen', x: 100, y: 160, severity: 1, symptoms: ['mild discomfort'], duration: '1 day' }
+// -----------------------------
+// Types
+// -----------------------------
+type SeverityLevel = 0 | 1 | 2 | 3 | 4 | 5;
+
+interface PatientPoint {
+  region: string;
+  x: number;
+  y: number;
+  severity: SeverityLevel;
+  symptoms: string[];
+  duration: string;
+}
+
+interface PatientInfo {
+  name: string;
+  age: number;
+  gender: string;
+  date: string;
+  chiefComplaint: string;
+}
+
+interface TimelinePoint {
+  day: string;
+  severity: number;
+  symptoms: number;
+}
+
+// -----------------------------
+// Sample Data (replace with real data)
+// -----------------------------
+const PATIENT_DATA: PatientPoint[] = [
+  { region: "head", x: 100, y: 50, severity: 3, symptoms: ["headache", "dizziness"], duration: "3 days" },
+  { region: "chest", x: 100, y: 120, severity: 5, symptoms: ["chest pain", "shortness of breath"], duration: "1 week" },
+  { region: "leftShoulder", x: 70, y: 100, severity: 2, symptoms: ["stiffness"], duration: "2 weeks" },
+  { region: "rightKnee", x: 110, y: 280, severity: 4, symptoms: ["pain", "swelling"], duration: "5 days" },
+  { region: "abdomen", x: 100, y: 160, severity: 1, symptoms: ["mild discomfort"], duration: "1 day" },
 ];
 
-const patientInfo = {
-  name: 'John Smith',
+const PATIENT_INFO: PatientInfo = {
+  name: "John Smith",
   age: 45,
-  gender: 'Male',
-  date: '2025-09-27',
-  chiefComplaint: 'Chest pain and difficulty breathing'
+  gender: "Male",
+  date: "2025-09-27",
+  chiefComplaint: "Chest pain and difficulty breathing",
 };
 
-// Timeline data for symptom progression
-const timelineData = [
-  { day: 'Day 1', severity: 2, symptoms: 1 },
-  { day: 'Day 2', severity: 3, symptoms: 2 },
-  { day: 'Day 3', severity: 4, symptoms: 3 },
-  { day: 'Day 4', severity: 5, symptoms: 4 },
-  { day: 'Today', severity: 4, symptoms: 5 }
+const TIMELINE_DATA: TimelinePoint[] = [
+  { day: "Day 1", severity: 2, symptoms: 1 },
+  { day: "Day 2", severity: 3, symptoms: 2 },
+  { day: "Day 3", severity: 4, symptoms: 3 },
+  { day: "Day 4", severity: 5, symptoms: 4 },
+  { day: "Today", severity: 4, symptoms: 5 },
 ];
 
-const PatientReportSystem = () => {
+// -----------------------------
+// Utilities
+// -----------------------------
+const severityFill: Record<SeverityLevel, string> = {
+  0: "rgba(224,224,224,0.5)",
+  1: "rgba(76,175,80,0.5)",
+  2: "rgba(255,235,59,0.5)",
+  3: "rgba(255,152,0,0.5)",
+  4: "rgba(244,67,54,0.5)",
+  5: "rgba(183,28,28,0.5)",
+};
+
+const severityRGB: Record<Exclude<SeverityLevel, 0>, [number, number, number]> = {
+  1: [76, 175, 80],
+  2: [255, 193, 7],
+  3: [255, 152, 0],
+  4: [244, 67, 54],
+  5: [183, 28, 28],
+};
+
+const getHeatmapColor = (severity: SeverityLevel) => severityFill[severity] ?? severityFill[0];
+const pointSize = (severity: SeverityLevel) => 8 + severity * 3;
+const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+// Sanitize colors/filters in the cloned DOM for html2canvas to avoid lab()/oklch() errors
+const safeOnClone = (doc: Document, rootId: string) => {
+  const style = doc.createElement("style");
+  style.setAttribute("data-pdf-sanitize", "true");
+  style.textContent = `
+    #${rootId}, #${rootId} * {
+      color: #111 !important;
+      background: transparent !important;
+      border-color: #ccc !important;
+
+      --background: #ffffff !important;
+      --foreground: #111111 !important;
+      --card: #ffffff !important;
+      --card-foreground: #111111 !important;
+      --muted: #f5f5f5 !important;
+      --muted-foreground: #555555 !important;
+      --accent: #e5e7eb !important;
+      --accent-foreground: #111111 !important;
+      --primary: #428bca !important;
+      --primary-foreground: #ffffff !important;
+      --ring: #93c5fd !important;
+    }
+
+    #${rootId} *, #${rootId} svg {
+      box-shadow: none !important;
+      filter: none !important;
+      -webkit-filter: none !important;
+      text-shadow: none !important;
+    }
+  `;
+  doc.head.appendChild(style);
+};
+
+// -----------------------------
+// Component
+// -----------------------------
+const PatientReportSystem: React.FC = () => {
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
-
-  const getHeatmapColor = (severity: number) => {
-    const colors: Record<number, string> = {
-      0: 'rgba(224,224,224,0.5)', // No concern
-      1: 'rgba(76,175,80,0.5)',   // Mild - Green  
-      2: 'rgba(255,235,59,0.5)',  // Moderate - Yellow
-      3: 'rgba(255,152,0,0.5)',   // Concerning - Orange
-      4: 'rgba(244,67,54,0.5)',   // Severe - Red
-      5: 'rgba(183,28,28,0.5)'    // Critical - Dark Red
-    };
-    return colors[severity] || colors[0];
-  };
-
-  const getPointSize = (severity: number) => {
-    return 8 + (severity * 3);
-  };
-
-  const COLORS = ['#4caf50', '#ffeb3b', '#ff9800', '#f44336', '#b71c1c'];
 
   const generatePDF = async () => {
     setIsGeneratingPDF(true);
-    
     try {
-      // Dynamic imports for client-side only
-      const jsPDF = (await import('jspdf')).default;
-      const html2canvas = (await import('html2canvas')).default;
-      
+      const jsPDF = (await import("jspdf")).default;
+      const html2canvas = (await import("html2canvas")).default;
+
+      // A4 (mm): 210 x 297
       const doc = new jsPDF();
-      
-      // Header with better styling
+
+      // Header
       doc.setFillColor(66, 139, 202);
-      doc.rect(0, 0, 210, 30, 'F'); // Full width header
-      
+      doc.rect(0, 0, 210, 30, "F");
       doc.setFontSize(18);
       doc.setTextColor(255, 255, 255);
-      doc.text('Patient Health Assessment Report', 20, 20);
-      
-      // Patient Information in a clean box
+      doc.text("Patient Health Assessment Report", 20, 20);
+
+      // Patient Info
       doc.setFillColor(248, 249, 250);
-      doc.rect(15, 35, 180, 35, 'F');
+      doc.rect(15, 35, 180, 35, "F");
       doc.setDrawColor(200, 200, 200);
-      doc.rect(15, 35, 180, 35, 'S');
-      
+      doc.rect(15, 35, 180, 35, "S");
+
       doc.setFontSize(11);
       doc.setTextColor(60, 60, 60);
-      doc.text('PATIENT INFORMATION', 20, 45);
-      
+      doc.setFont("helvetica", "bold");
+      doc.text("PATIENT INFORMATION", 20, 45);
+
       doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
       doc.setTextColor(40, 40, 40);
-      doc.text(`Name: ${patientInfo.name}`, 20, 55);
-      doc.text(`Age: ${patientInfo.age}`, 100, 55);
-      doc.text(`Gender: ${patientInfo.gender}`, 150, 55);
-      doc.text(`Date: ${patientInfo.date}`, 20, 62);
-      doc.text(`Chief Complaint: ${patientInfo.chiefComplaint}`, 20, 69);
-      
-      // Capture and position Body Heatmap better
-      const heatmapElement = document.getElementById('body-heatmap');
-      if (heatmapElement) {
-        const heatmapCanvas = await html2canvas(heatmapElement, { 
-          backgroundColor: '#ffffff',
-          scale: 3,
+      doc.text(`Name: ${PATIENT_INFO.name}`, 20, 55);
+      doc.text(`Age: ${PATIENT_INFO.age}`, 100, 55);
+      doc.text(`Gender: ${PATIENT_INFO.gender}`, 150, 55);
+      doc.text(`Date: ${PATIENT_INFO.date}`, 20, 62);
+      doc.text(`Chief Complaint: ${PATIENT_INFO.chiefComplaint}`, 20, 69);
+
+      // Body Heatmap (with scroll guard + sanitizer)
+      const heatmapEl = document.getElementById("body-heatmap");
+      if (heatmapEl) {
+        const heatmapCanvas = await html2canvas(heatmapEl, {
+          backgroundColor: "#ffffff",
+          scale: 2,
           useCORS: true,
-          allowTaint: true
+          scrollX: 0,
+          scrollY: -window.scrollY, // prevent viewport cropping
+          onclone: (clonedDoc) => safeOnClone(clonedDoc, "body-heatmap"),
         });
-        const heatmapImage = heatmapCanvas.toDataURL('image/png');
-        
-        // Add section title
+        const img = heatmapCanvas.toDataURL("image/png");
         doc.setFontSize(12);
         doc.setTextColor(40, 40, 40);
-        doc.text('Body Pain Assessment', 20, 85);
-        
-        // Add body heatmap with proper sizing
-        doc.addImage(heatmapImage, 'PNG', 20, 90, 70, 100);
+        doc.setFont("helvetica", "bold");
+        doc.text("Body Pain Assessment", 20, 85);
+        doc.addImage(img, "PNG", 20, 90, 70, 100);
       }
-      
-      // Charts section with better positioning
-      const severityElement = document.getElementById('severity-chart');
-      if (severityElement) {
-        const severityCanvas = await html2canvas(severityElement, { 
-          backgroundColor: '#ffffff',
+
+      // Severity Chart
+      const severityEl = document.getElementById("severity-chart");
+      if (severityEl) {
+        const c = await html2canvas(severityEl, {
+          backgroundColor: "#ffffff",
           scale: 2,
-          useCORS: true
+          useCORS: true,
+          onclone: (clonedDoc) => safeOnClone(clonedDoc, "severity-chart"),
         });
-        const severityImage = severityCanvas.toDataURL('image/png');
-        
+        const img = c.toDataURL("image/png");
         doc.setFontSize(12);
-        doc.text('Severity Analysis', 105, 85);
-        doc.addImage(severityImage, 'PNG', 105, 90, 85, 55);
+        doc.text("Severity Analysis", 105, 85);
+        doc.addImage(img, "PNG", 105, 90, 85, 55);
       }
-      
-      const timelineElement = document.getElementById('timeline-chart');
-      if (timelineElement) {
-        const timelineCanvas = await html2canvas(timelineElement, { 
-          backgroundColor: '#ffffff',
+
+      // Timeline Chart
+      const timelineEl = document.getElementById("timeline-chart");
+      if (timelineEl) {
+        const c = await html2canvas(timelineEl, {
+          backgroundColor: "#ffffff",
           scale: 2,
-          useCORS: true
+          useCORS: true,
+          onclone: (clonedDoc) => safeOnClone(clonedDoc, "timeline-chart"),
         });
-        const timelineImage = timelineCanvas.toDataURL('image/png');
-        
+        const img = c.toDataURL("image/png");
         doc.setFontSize(12);
-        doc.text('Symptom Progression', 105, 155);
-        doc.addImage(timelineImage, 'PNG', 105, 160, 85, 45);
+        doc.text("Symptom Progression", 105, 155);
+        doc.addImage(img, "PNG", 105, 160, 85, 45);
       }
-      
-      // Improved table with better styling
-      const tableStartY = 215;
-      let currentY = tableStartY;
-      
-      // Table title
+
+      // Table
+      let y = 215;
       doc.setFontSize(12);
       doc.setTextColor(40, 40, 40);
-      doc.text('Detailed Symptom Summary', 20, currentY - 5);
-      
-      // Table header with better design
+      doc.setFont("helvetica", "bold");
+      doc.text("Detailed Symptom Summary", 20, y - 5);
+
       doc.setFillColor(66, 139, 202);
-      doc.rect(15, currentY, 180, 12, 'F');
+      doc.rect(15, y, 180, 12, "F");
       doc.setDrawColor(66, 139, 202);
-      doc.rect(15, currentY, 180, 12, 'S');
-      
+      doc.rect(15, y, 180, 12, "S");
+
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.text('Body Region', 20, currentY + 8);
-      doc.text('Severity', 70, currentY + 8);
-      doc.text('Symptoms', 95, currentY + 8);
-      doc.text('Duration', 155, currentY + 8);
-      currentY += 12;
-      
-      // Table rows with better formatting
+      doc.text("Body Region", 20, y + 8);
+      doc.text("Severity", 70, y + 8);
+      doc.text("Symptoms", 95, y + 8);
+      doc.text("Duration", 155, y + 8);
+      y += 12;
+
       doc.setFont("helvetica", "normal");
       doc.setTextColor(40, 40, 40);
-      const tableData = patientData.filter(p => p.severity > 0);
-      
-      tableData.forEach((item, index) => {
-        // Alternate row colors with borders
-        if (index % 2 === 0) {
-          doc.setFillColor(248, 249, 250);
-        } else {
-          doc.setFillColor(255, 255, 255);
+
+      const rows = PATIENT_DATA.filter((p) => p.severity > 0);
+      rows.forEach((item, idx) => {
+        if (y > 255) {
+          doc.addPage();
+          y = 20;
         }
-        doc.rect(15, currentY, 180, 10, 'F');
+
+        doc.setFillColor(idx % 2 === 0 ? 248 : 255, idx % 2 === 0 ? 249 : 255, idx % 2 === 0 ? 250 : 255);
+        doc.rect(15, y, 180, 10, "F");
         doc.setDrawColor(220, 220, 220);
-        doc.rect(15, currentY, 180, 10, 'S');
-        
-        // Capitalize region names
-        const regionName = item.region.charAt(0).toUpperCase() + item.region.slice(1);
-        doc.text(regionName, 20, currentY + 7);
-        
-        // Color-code severity
-        const severityColors: Record<number, [number, number, number]> = {
-          1: [76, 175, 80],
-          2: [255, 193, 7],
-          3: [255, 152, 0],
-          4: [244, 67, 54],
-          5: [183, 28, 28]
-        };
-        doc.setTextColor(...(severityColors[item.severity] ?? [40, 40, 40]));
-        doc.setFont("helvetica", "bold");
-        doc.text(item.severity.toString(), 75, currentY + 7);
-        
-        // Reset color for other text
+        doc.rect(15, y, 180, 10, "S");
+
         doc.setTextColor(40, 40, 40);
+        doc.text(capitalize(item.region), 20, y + 7);
+
+        const sevRGB = severityRGB[(item.severity || 1) as Exclude<SeverityLevel, 0>] ?? [40, 40, 40];
+        doc.setTextColor(...sevRGB);
+        doc.setFont("helvetica", "bold");
+        doc.text(String(item.severity), 75, y + 7);
+
         doc.setFont("helvetica", "normal");
-        
-        // Handle long symptom text better
-        const symptomsText = item.symptoms.join(', ');
-        if (symptomsText.length > 25) {
-          const wrapped = doc.splitTextToSize(symptomsText, 50);
-          doc.text(wrapped[0] + '...', 100, currentY + 7);
-        } else {
-          doc.text(symptomsText, 100, currentY + 7);
-        }
-        
-        doc.text(item.duration, 160, currentY + 7);
-        currentY += 10;
+        doc.setTextColor(40, 40, 40);
+
+        const symptoms = item.symptoms.join(", ");
+        const truncated = symptoms.length > 45 ? `${symptoms.slice(0, 42)}...` : symptoms;
+        doc.text(truncated, 95, y + 7);
+        doc.text(item.duration, 155, y + 7);
+
+        y += 10;
       });
-      
-      // Clinical Notes with better styling
-      const notesY = currentY + 15;
-      
-      // Notes header box
+
+      // Recommendations
+      y += 12;
+      if (y > 250) {
+        doc.addPage();
+        y = 20;
+      }
+
       doc.setFillColor(240, 248, 255);
-      doc.rect(15, notesY - 5, 180, 40, 'F');
+      doc.rect(15, y - 5, 180, 40, "F");
       doc.setDrawColor(66, 139, 202);
-      doc.rect(15, notesY - 5, 180, 40, 'S');
-      
+      doc.rect(15, y - 5, 180, 40, "S");
+
+      doc.setFont("helvetica", "bold");
       doc.setFontSize(12);
       doc.setTextColor(40, 40, 40);
-      doc.setFont("helvetica", "bold");
-      doc.text('Clinical Recommendations', 20, notesY + 5);
-      
-      doc.setFontSize(9);
+      doc.text("Clinical Recommendations", 20, y + 5);
+
       doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
       doc.setTextColor(60, 60, 60);
-      
-      // Better formatted bullet points
+
       const recommendations = [
-        'Priority areas: Chest (severity 5), Right Knee (severity 4)',
-        'Recommend immediate cardiac evaluation for chest symptoms',
-        'Consider orthopedic consultation for knee pain and swelling',
-        'Schedule follow-up in 48-72 hours to monitor progression'
+        "Priority areas: Chest (severity 5), Right Knee (severity 4).",
+        "Recommend immediate cardiac evaluation for chest symptoms.",
+        "Consider orthopedic consultation for knee pain and swelling.",
+        "Schedule follow-up in 48–72 hours to monitor progression.",
       ];
-      
-      recommendations.forEach((rec, index) => {
-        doc.text('• ' + rec, 20, notesY + 15 + (index * 6));
-      });
-      
-      // Footer with page info
+      recommendations.forEach((rec, i) => doc.text(`• ${rec}`, 20, y + 15 + i * 6));
+
+      // Footer
       doc.setFontSize(8);
       doc.setTextColor(120, 120, 120);
-      doc.text('Generated by Patient Assessment System', 20, 285);
+      doc.text("Generated by Patient Assessment System", 20, 285);
       doc.text(`Report Date: ${new Date().toLocaleDateString()}`, 130, 285);
-      doc.text('Page 1 of 1', 175, 285);
-      
-      // Save the PDF
-      doc.save(`${patientInfo.name.replace(/\s+/g, '_')}_Health_Report_${patientInfo.date}.pdf`);
-      
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-      alert('Error generating PDF. Please try again.');
+      doc.text("Page 1", 185, 285, { align: "right" });
+
+      doc.save(`${PATIENT_INFO.name.replace(/\s+/g, "_")}_Health_Report_${PATIENT_INFO.date}.pdf`);
+    } catch (err) {
+      console.error("Error generating PDF:", err);
+      alert("Error generating PDF. Please try again.");
     } finally {
       setIsGeneratingPDF(false);
     }
   };
 
+  const activeData = PATIENT_DATA.filter((p) => p.severity > 0);
+
   return (
-    <div className="max-w-7xl mx-auto p-6 bg-gray-50 min-h-screen">
+    <div className="mx-auto min-h-screen max-w-7xl bg-gray-50 p-6">
       {/* Header */}
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div className="flex justify-between items-center">
+      <section className="mb-6 rounded-lg bg-white p-6 shadow-md">
+        <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">Patient Health Assessment</h1>
-            <div className="text-gray-600">
-              <p><strong>Patient:</strong> {patientInfo.name} | <strong>Age:</strong> {patientInfo.age} | <strong>Date:</strong> {patientInfo.date}</p>
-              <p><strong>Chief Complaint:</strong> {patientInfo.chiefComplaint}</p>
+            <h1 className="mb-2 text-3xl font-bold text-gray-900">Patient Health Assessment</h1>
+            <div className="text-gray-700">
+              <p>
+                <strong>Patient:</strong> {PATIENT_INFO.name} &nbsp;|&nbsp; <strong>Age:</strong> {PATIENT_INFO.age} &nbsp;|&nbsp;{" "}
+                <strong>Date:</strong> {PATIENT_INFO.date}
+              </p>
+              <p>
+                <strong>Chief Complaint:</strong> {PATIENT_INFO.chiefComplaint}
+              </p>
             </div>
           </div>
           <button
             onClick={generatePDF}
             disabled={isGeneratingPDF}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-6 py-3 rounded-lg font-semibold transition-colors duration-200 flex items-center gap-2"
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white transition-colors duration-200 hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-400"
+            aria-busy={isGeneratingPDF}
           >
             {isGeneratingPDF ? (
               <>
-                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                Generating...
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Generating…
               </>
             ) : (
               <>📄 Generate PDF Report</>
             )}
           </button>
         </div>
-      </div>
+      </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Body Heatmap */}
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">Body Pain/Discomfort Map</h2>
-          <div id="body-heatmap" className="flex flex-col items-center gap-4">
-            <div className="relative">
-              {/* Body outline image */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Body Heatmap (responsive image + overlay, unclipped legend) */}
+        <section className="rounded-lg bg-white p-6 shadow-md">
+          <h2 className="mb-4 text-xl font-semibold text-gray-900">Body Pain Assessment</h2>
+          <div id="body-heatmap" className="flex flex-col items-center gap-3 pb-4">
+            <div className="relative w-full max-w-[260px] aspect-[1/2]">
               <Image
                 src="/body-outline.jpg"
-                alt="Body Outline"
-                width={200}
-                height={400}
-                className="border"
-                style={{ zIndex: 0 }}
+                alt="Human body outline"
+                fill
+                sizes="(max-width: 768px) 60vw, 260px"
+                className="rounded-md border object-contain"
+                priority
               />
-
               <svg
-                width="200"
-                height="400"
                 viewBox="0 0 200 400"
-                className="absolute top-0 left-0"
-                style={{ zIndex: 1, pointerEvents: 'none' }}
+                className="absolute inset-0 h-full w-full"
+                preserveAspectRatio="xMidYMid meet"
+                aria-label="Pain points overlay"
+                role="img"
               >
-                {/* Data-driven points */}
-                {patientData.map((point, index) => (
+                {PATIENT_DATA.map((pt, i) => (
                   <circle
-                    key={index}
-                    cx={point.x}
-                    cy={point.y}
-                    r={getPointSize(point.severity)}
-                    fill={getHeatmapColor(point.severity)}
+                    key={`${pt.region}-${i}`}
+                    cx={pt.x}
+                    cy={pt.y}
+                    r={pointSize(pt.severity)}
+                    fill={getHeatmapColor(pt.severity)}
                     stroke="#333"
                     strokeWidth="1"
-                    opacity="0.8"
-                    className="hover:opacity-100 cursor-pointer"
+                    opacity="0.9"
+                    vectorEffect="non-scaling-stroke"
                   >
-                    <title>{`${point.region}: ${point.symptoms.join(', ')} (Severity: ${point.severity})`}</title>
+                    <title>
+                      {`${capitalize(pt.region)}: ${pt.symptoms.join(", ")} (Severity: ${pt.severity}) • Duration: ${pt.duration}`}
+                    </title>
                   </circle>
                 ))}
               </svg>
             </div>
-            
-            {/* Legend */}
-            <div className="flex flex-wrap gap-3 text-sm">
-              {[1,2,3,4,5].map(level => (
-                <div key={level} className="flex items-center gap-2">
-                  <div 
-                    className="w-4 h-4 rounded-full border"
-                    style={{backgroundColor: getHeatmapColor(level)}}
+
+            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm text-gray-800 overflow-visible">
+              {[1, 2, 3, 4, 5].map((lvl) => (
+                <div key={lvl} className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-4 w-4 rounded-full border"
+                    style={{ backgroundColor: getHeatmapColor(lvl as SeverityLevel) }}
                   />
-                  <span>Level {level}</span>
+                  <span className="leading-5">Level {lvl}</span>
                 </div>
               ))}
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Charts Panel */}
+        {/* Charts */}
         <div className="space-y-6">
-          {/* Severity Chart */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-lg font-semibold mb-4 text-gray-800">Severity by Body Region</h3>
-            <div id="severity-chart">
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={patientData}>
+          <section className="rounded-lg bg-white p-6 shadow-md">
+            <h3 className="mb-4 text-lg font-semibold text-gray-900">Severity by Body Region</h3>
+            <div id="severity-chart" className="h-[220px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={PATIENT_DATA}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="region" 
-                    fontSize={12}
-                    angle={-45}
-                    textAnchor="end"
-                    height={80}
-                  />
+                  <XAxis dataKey="region" fontSize={12} angle={-25} textAnchor="end" height={60} tickFormatter={capitalize} />
                   <YAxis domain={[0, 5]} />
-                  <Tooltip 
-                    formatter={(value) => [`Severity: ${value}`, '']}
-                    labelFormatter={(label) => `Region: ${label}`}
+                  <Tooltip
+                    formatter={(v: number) => [`Severity: ${v}`, ""]}
+                    labelFormatter={(label: string) => `Region: ${capitalize(label)}`}
                   />
                   <Bar dataKey="severity">
-                    {patientData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={getHeatmapColor(entry.severity)} />
+                    {PATIENT_DATA.map((d, idx) => (
+                      <Cell key={idx} fill={getHeatmapColor(d.severity)} />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
-          </div>
+          </section>
 
-          {/* Timeline Chart */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-lg font-semibold mb-4 text-gray-800">Symptom Progression</h3>
-            <div id="timeline-chart">
-              <ResponsiveContainer width="100%" height={150}>
-                <LineChart data={timelineData}>
+          <section className="rounded-lg bg-white p-6 shadow-md">
+            <h3 className="mb-4 text-lg font-semibold text-gray-900">Symptom Progression</h3>
+            <div id="timeline-chart" className="h-[180px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={TIMELINE_DATA}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" fontSize={12} />
                   <YAxis domain={[0, 6]} />
                   <Tooltip />
-                  <Line 
-                    type="monotone" 
-                    dataKey="severity" 
-                    stroke="#f44336" 
-                    strokeWidth={3}
-                    dot={{ fill: '#f44336', strokeWidth: 2, r: 5 }}
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="symptoms" 
-                    stroke="#ff9800" 
-                    strokeWidth={2}
-                    dot={{ fill: '#ff9800', strokeWidth: 2, r: 4 }}
-                  />
+                  <Line type="monotone" dataKey="severity" stroke="#f44336" strokeWidth={3} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="symptoms" stroke="#ff9800" strokeWidth={2} dot={{ r: 3 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
-          </div>
+          </section>
         </div>
       </div>
 
       {/* Detailed Summary */}
-      <div className="bg-white rounded-lg shadow-md p-6 mt-6">
-        <h3 className="text-xl font-semibold mb-4 text-gray-800">Detailed Symptom Summary</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {patientData.filter(p => p.severity > 0).map((point, index) => (
-            <div key={index} className="border border-gray-200 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <div 
-                  className="w-4 h-4 rounded-full"
-                  style={{backgroundColor: getHeatmapColor(point.severity)}}
-                />
-                <span className="font-semibold text-gray-800">{point.region}</span>
-                <span className="text-sm text-gray-600">Severity: {point.severity}/5</span>
-              </div>
-              <p className="text-sm text-gray-700 mb-1">
-                <strong>Symptoms:</strong> {point.symptoms.join(', ')}
+      <section className="mt-6 rounded-lg bg-white p-6 shadow-md">
+        <h3 className="mb-4 text-xl font-semibold text-gray-900">Detailed Symptom Summary</h3>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {activeData.map((pt, i) => (
+            <article key={`${pt.region}-${i}`} className="rounded-lg border border-gray-200 p-4">
+              <header className="mb-2 flex items-center gap-2">
+                <span className="inline-block h-4 w-4 rounded-full" style={{ backgroundColor: getHeatmapColor(pt.severity) }} />
+                <span className="font-semibold text-gray-900">{capitalize(pt.region)}</span>
+                <span className="text-sm text-gray-600">Severity: {pt.severity}/5</span>
+              </header>
+              <p className="mb-1 text-sm text-gray-800">
+                <strong>Symptoms:</strong> {pt.symptoms.join(", ")}
               </p>
               <p className="text-sm text-gray-600">
-                <strong>Duration:</strong> {point.duration}
+                <strong>Duration:</strong> {pt.duration}
               </p>
-            </div>
+            </article>
           ))}
         </div>
-      </div>
+      </section>
     </div>
   );
 };
