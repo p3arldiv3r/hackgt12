@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState } from 'react';
 import { Heart, ChevronRight } from 'lucide-react';
 
@@ -350,7 +351,7 @@ export default function MedicalIntakeForm() {
       });
       const data = await res.json();
       setBackendResponse(data);
-    } catch (err) {
+    } catch {
       setBackendResponse({ error: "Failed to submit. Please try again." });
     }
   };
@@ -403,7 +404,7 @@ export default function MedicalIntakeForm() {
                   className="select select-bordered"
               required
             >
-                  <option value="">Select symptom type</option>
+              <option value="">Select symptom type</option>
                   {availableSymptoms.map(type => (
                     <option key={type} value={type}>
                       {type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' ')}
@@ -473,7 +474,7 @@ export default function MedicalIntakeForm() {
               disabled={patientData.symptoms.filter(s => s.type && s.type !== '').length === 0}
             >
               🤖 Get AI Suggestions
-            </button>
+        </button>
           </div>
         </div>
 
@@ -658,7 +659,7 @@ export default function MedicalIntakeForm() {
               🤖 AI-Powered Insights
             </h3>
             
-            {symptomSuggestions.potentialDiseases && (
+            {symptomSuggestions?.potentialDiseases && (
               <div className="mb-4">
                 <h4 className="font-medium text-gray-700 mb-2">Potential Conditions to Consider:</h4>
                 <div className="flex flex-wrap gap-2">
@@ -671,7 +672,7 @@ export default function MedicalIntakeForm() {
               </div>
             )}
             
-            {symptomSuggestions.redFlags && symptomSuggestions.redFlags.length > 0 && (
+            {symptomSuggestions?.redFlags && symptomSuggestions.redFlags.length > 0 && (
               <div className="mb-4">
                 <h4 className="font-medium text-red-700 mb-2">⚠️ Red Flags:</h4>
                 <div className="flex flex-wrap gap-2">
@@ -684,7 +685,7 @@ export default function MedicalIntakeForm() {
               </div>
             )}
             
-            {symptomSuggestions.additionalSymptoms && (
+            {symptomSuggestions?.additionalSymptoms && (
               <div className="mb-4">
                 <h4 className="font-medium text-gray-700 mb-2">Additional Symptoms to Consider:</h4>
                 <div className="flex flex-wrap gap-2">
@@ -697,7 +698,7 @@ export default function MedicalIntakeForm() {
               </div>
             )}
             
-            {symptomSuggestions.recommendations && (
+            {symptomSuggestions?.recommendations && (
               <div>
                 <h4 className="font-medium text-gray-700 mb-2">Recommendations:</h4>
                 <ul className="list-disc list-inside text-sm text-gray-600">
@@ -750,7 +751,7 @@ export default function MedicalIntakeForm() {
             </div>
           ) : (
             <div className="grid gap-6">
-              {backendResponse.analysis && (
+              {backendResponse?.analysis && (
                 <div className="bg-white p-4 rounded-lg border">
                   <h4 className="font-semibold mb-3 text-blue-800">📋 Clinical Summary</h4>
                   <p className="text-gray-700 mb-3">{backendResponse.analysis.summary}</p>

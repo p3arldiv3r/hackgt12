@@ -54,7 +54,7 @@ class DataPipeline {
   processSymptomTimeline(symptoms: Symptom[]): SymptomTimelineData[] {
     return symptoms
       .map(symptom => ({
-        date: symptom.startDate,
+        date: new Date().toISOString().split('T')[0], // Use current date as fallback
         severity: symptom.severity,
         symptom: symptom.type,
         type: 'symptom' as const

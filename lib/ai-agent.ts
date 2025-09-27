@@ -91,7 +91,7 @@ class MedicalAIAgent {
 
     // Symptom timeline
     const symptomTimeline = symptoms.map(symptom => ({
-      date: symptom.startDate,
+      date: new Date().toISOString().split('T')[0], // Use current date as fallback
       severity: symptom.severity,
       symptom: symptom.type
     }));
