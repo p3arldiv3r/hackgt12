@@ -2,12 +2,25 @@ import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY || 'demo-key',
 });
 
 export async function POST(request: NextRequest) {
   try {
     const { currentSymptoms, patientInfo } = await request.json();
+    
+    // Return demo data if no real API key
+    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'demo-key') {
+      return NextResponse.json({
+        success: true,
+        data: {
+          additionalSymptoms: ["fever", "chills", "sweating", "weight loss", "night sweats"],
+          potentialDiseases: ["Viral infection", "Bacterial infection", "Autoimmune condition"],
+          redFlags: ["High fever (>103°F)", "Difficulty breathing", "Severe dehydration"],
+          recommendations: ["Monitor symptoms closely", "Stay hydrated", "Seek immediate care if symptoms worsen"]
+        }
+      });
+    }
     
     // Create a prompt to get relevant symptoms and potential diseases
     const prompt = `
