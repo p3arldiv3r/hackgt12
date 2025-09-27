@@ -42,9 +42,8 @@ export const SymptomSchema = z.object({
   type: SymptomType,
   severity: SeverityScale,
   description: z.string().optional(),
-  startDate: z.string(), // ISO date string
-  endDate: z.string().optional(), // ISO date string
   frequency: z.enum(['constant', 'intermittent', 'once']),
+  duration: z.enum(['hours', 'days', 'weeks', 'months', 'years', 'decades']),
 });
 
 export const PainLocationSchema = z.object({
@@ -84,7 +83,14 @@ export const PatientQuestionnaireSchema = z.object({
   painLocations: z.array(PainLocationSchema).optional(),
   healthMetrics: HealthMetricsSchema,
   additionalNotes: z.string().optional(),
-  submissionDate: z.string(), // ISO date string
+  submissionDate: z.string(), // <-- comma here
+  followUpResponses: z
+    .array(
+      z.object({
+        question: z.string(),
+        answer: z.string(),
+      })
+    )
 });
 
 // Export types for TypeScript
@@ -111,14 +117,14 @@ export const mockPatientData: PatientQuestionnaire = {
       type: 'headache',
       severity: 7,
       description: 'Throbbing pain in temples',
-      startDate: '2024-01-15',
       frequency: 'intermittent',
+      duration: 'weeks',
     },
     {
       type: 'nausea',
       severity: 4,
-      startDate: '2024-01-16',
       frequency: 'constant',
+      duration: 'days',
     },
   ],
   painLocations: [
@@ -151,6 +157,8 @@ export const mockPatientData: PatientQuestionnaire = {
       changes: 'decreased',
     },
   },
+  
   additionalNotes: 'Symptoms started after work stress increased',
   submissionDate: '2024-01-17T10:30:00Z',
+  followUpResponses: [],
 };
