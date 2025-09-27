@@ -183,6 +183,8 @@ class MedicalAIAgent {
     `;
   }
 
+  
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private formatAnalysis(aiResponse: any, questionnaire: PatientQuestionnaire): AIAnalysis {
     return {
       summary: aiResponse.summary || 'Analysis completed',
