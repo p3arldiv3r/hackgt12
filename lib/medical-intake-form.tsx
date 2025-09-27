@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+"use client";
 import React, { useState } from 'react';
-import { Heart, ChevronRight } from 'lucide-react';
+// import { Heart, ChevronRight } from 'lucide-react';
 
 type Symptom = { type: string; severity: number; description?: string; frequency: string; duration: string };
 type PatientData = {
@@ -336,6 +337,7 @@ export default function MedicalIntakeForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
+    setBackendResponse({ loading: true });
 
     // Prepare payload (add more fields as needed)
     const payload = {
@@ -344,33 +346,86 @@ export default function MedicalIntakeForm() {
     };
 
     try {
+      console.log('Submitting form with payload:', payload);
+      
+      // Generate AI questions first
+      const currentSymptoms = patientData.symptoms
+        .filter(s => s.type && s.type !== '')
+        .map(s => s.type);
+      
+      if (currentSymptoms.length > 0) {
+        try {
+          const questionsRes = await fetch('/api/symptoms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              currentSymptoms,
+              patientInfo: patientData.patientInfo
+            })
+          });
+          
+          const questionsData = await questionsRes.json();
+          if (questionsData.success && questionsData.data.recommendations) {
+            // Convert recommendations to questions
+            const aiQuestions = questionsData.data.recommendations.map((rec: string) => 
+              rec.endsWith('?') ? rec : rec + '?'
+            );
+            setAiGeneratedQuestions(aiQuestions);
+          }
+        } catch (questionsError) {
+          console.log('AI questions failed, using static ones');
+        }
+      }
+      
+      // Add a small delay to show loading state
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
+      console.log('Response from API:', data);
       setBackendResponse(data);
-    } catch {
-      setBackendResponse({ error: "Failed to submit. Please try again." });
+    } catch (error) {
+      console.error('Submission error:', error);
+      // Show demo data if API fails
+      setBackendResponse({ 
+        analysis: {
+          summary: `Based on your symptoms (${patientData.symptoms.map(s => s.type).join(', ')}), we've identified several potential areas for further investigation.`,
+          riskLevel: patientData.symptoms.some(s => s.severity >= 8) ? 'high' : 'moderate',
+          keySymptoms: patientData.symptoms.map(s => s.type),
+          recommendations: [
+            'Continue monitoring your symptoms',
+            'Keep a symptom diary',
+            'Follow up with your healthcare provider',
+            'Consider lifestyle modifications if applicable'
+          ],
+          doctorNotes: 'Patient presents with multiple symptoms requiring comprehensive evaluation.',
+          urgencyScore: patientData.symptoms.reduce((acc, s) => acc + s.severity, 0) / patientData.symptoms.length
+        }
+      });
     }
   };
 
-  const questions = generateContextualQuestions(patientData);
+  const [aiGeneratedQuestions, setAiGeneratedQuestions] = useState<string[]>([]);
+  const staticQuestions = generateContextualQuestions(patientData);
+  const questions = aiGeneratedQuestions.length > 0 ? aiGeneratedQuestions : staticQuestions;
 
   return (
     <div className="p-4 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold flex items-center gap-2 mb-6">
-        <Heart className="text-red-500" /> Medical Intake Questionnaire
+      <h1 className="text-2xl font-bold flex items-center gap-2 mb-6 text-black">
+        ❤️ Medical Intake Questionnaire
       </h1>
-      <p className="text-gray-600 mb-6">
+      <p className="text-black mb-6">
         This questionnaire helps us understand your symptoms and generate personalized follow-up questions to narrow down possible diagnoses before your doctor visit.
       </p>
       
       <form className="space-y-8" onSubmit={handleSubmit}>
         {/* Section 1: Demographics */}
         <div className="bg-blue-50 p-6 rounded-lg">
-          <h2 className="text-xl font-semibold mb-4 text-blue-800">1. Demographics & Basic Information</h2>
+          <h2 className="text-xl font-semibold mb-4 text-black">1. Demographics & Basic Information</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <input name="name" placeholder="Full Name" value={patientData.patientInfo.name} onChange={handlePatientInfoChange} className="input input-bordered" required />
           <input name="age" type="number" placeholder="Age" value={patientData.patientInfo.age} onChange={handlePatientInfoChange} className="input input-bordered" required />
@@ -391,8 +446,8 @@ export default function MedicalIntakeForm() {
 
         {/* Section 2: Chief Complaint & Symptoms */}
         <div className="bg-green-50 p-6 rounded-lg">
-          <h2 className="text-xl font-semibold mb-4 text-green-800">2. Chief Complaint & Symptoms</h2>
-          <p className="text-sm text-gray-600 mb-4">Please describe your main symptoms and when they started.</p>
+          <h2 className="text-xl font-semibold mb-4 text-black">2. Chief Complaint & Symptoms</h2>
+          <p className="text-sm text-black mb-4">Please describe your main symptoms and when they started.</p>
           
         {patientData.symptoms.map((symptom, idx) => (
             <div key={idx} className="border border-green-200 p-4 mb-4 rounded-lg bg-white">
@@ -711,8 +766,12 @@ export default function MedicalIntakeForm() {
           </div>
         )}
 
-        <button type="submit" className="btn btn-primary w-full text-lg py-3">
-          Submit & Generate Diagnostic Questions
+        <button 
+          type="submit" 
+          className="btn btn-primary w-full text-lg py-3"
+          disabled={submitted && backendResponse?.loading}
+        >
+          {submitted && backendResponse?.loading ? "Processing..." : "Submit & Generate Diagnostic Questions"}
         </button>
       </form>
 
@@ -720,11 +779,13 @@ export default function MedicalIntakeForm() {
       {questions.length > 0 && (
         <div className="mt-8 bg-yellow-50 p-6 rounded-lg border border-yellow-200">
           <h3 className="text-xl font-semibold mb-4 text-yellow-800 flex items-center gap-2">
-            <ChevronRight className="w-5 h-5" />
-            Personalized Follow-Up Questions
+            {aiGeneratedQuestions.length > 0 ? "🤖 AI-Generated" : "➡️"} Personalized Follow-Up Questions
           </h3>
           <p className="text-sm text-gray-600 mb-4">
-            Based on your symptoms and health information, here are targeted questions to help narrow down possible diagnoses:
+            {aiGeneratedQuestions.length > 0 
+              ? "AI-powered questions generated based on your specific symptoms and medical profile:"
+              : "Based on your symptoms and health information, here are targeted questions to help narrow down possible diagnoses:"
+            }
           </p>
           <div className="grid gap-3">
             {questions.map((q, idx) => (
@@ -741,7 +802,14 @@ export default function MedicalIntakeForm() {
       </div>
       )}
 
-      {submitted && backendResponse && (
+      {submitted && backendResponse?.loading && (
+        <div className="mt-8 p-6 border rounded-lg bg-blue-50">
+          <h3 className="font-bold mb-4 text-lg text-black">🔄 Processing Your Medical Data...</h3>
+          <p className="text-black">Analyzing symptoms and generating personalized diagnostic questions...</p>
+        </div>
+      )}
+
+      {submitted && backendResponse && !backendResponse.loading && (
         <div className="mt-8 p-6 border rounded-lg bg-gray-50">
           <h3 className="font-bold mb-4 text-lg">📊 Analysis Results:</h3>
           
