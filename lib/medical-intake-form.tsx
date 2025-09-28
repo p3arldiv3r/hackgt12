@@ -1108,13 +1108,19 @@ export default function MedicalIntakeForm() {
             <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
               <button
                 onClick={() => {
-                  // Generate doctor report - placeholder for team functionality
-                  console.log('Generating doctor report...', {
+                  // Navigate to visualization page with patient data
+                  const reportData = {
                     patientData,
                     aiAnalysis: aiAnalysisData,
                     responses: patientData.responses
-                  });
-                  alert('Doctor report generation - This will be implemented by your team members!');
+                  };
+                  
+                  // Encode data for URL
+                  const encodedData = encodeURIComponent(JSON.stringify(patientData));
+                  const encodedAnalysis = aiAnalysisData ? encodeURIComponent(JSON.stringify(aiAnalysisData)) : '';
+                  
+                  // Navigate to report page
+                  window.open(`/report?data=${encodedData}&analysis=${encodedAnalysis}`, '_blank');
                 }}
                 className="px-8 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center justify-center gap-2"
               >
