@@ -1,12 +1,15 @@
+"use client";
 import React, { useState, useEffect } from 'react';
-import { Heart, User, Stethoscope, Brain, AlertCircle, CheckCircle, ArrowRight, ArrowLeft, Plus, Trash2 } from 'lucide-react';
+// import { Heart, User, Stethoscope, Brain, AlertCircle, CheckCircle, ArrowRight, ArrowLeft, Plus, Trash2 } from 'lucide-react';
 
 type Symptom = { 
   type: string; 
   severity: number; 
   description?: string; 
   frequency: string; 
-  duration: string; 
+  duration?: string; 
+  durationNumber?: number; 
+  durationUnit?: string; 
 };
 
 type PatientData = {
@@ -36,9 +39,31 @@ type Question = {
 };
 
 const baseSymptomTypes = [
-  "headache", "nausea", "fatigue", "dizziness", "pain", "fever", "cough", 
-  "shortness_of_breath", "chest_pain", "joint_pain", "abdominal_pain", 
-  "vision_problems", "memory_issues", "other"
+  // Neurological
+  "headache", "dizziness", "confusion", "memory issues", "sensitivity to light", 
+  "sensitivity to sound", "balance_problems", "concentration difficulty", "seizure", "weakness",
+  "numbness", "tingling", "speech_problems", "vision changes",
+  
+  // Gastrointestinal  
+  "nausea", "vomiting", "abdominal pain", "diarrhea", "constipation", "loss of appetite",
+  "bloating", "heartburn", "difficulty swallowing",
+  
+  // Cardiovascular/Respiratory
+  "chest pain", "shortness of breath", "cough", "palpitations", "rapid heartbeat",
+  "swelling legs", "fatigue", "exercise intolerance",
+  
+  // Musculoskeletal
+  "joint pain", "muscle pain", "back pain", "neck pain", "stiffness", "swelling joints",
+  
+  // Constitutional
+  "fever", "chills", "night sweats", "weight loss", "weight gain", "mood changes",
+  "sleep disturbance", "anxiety", "depression",
+  
+  // Genitourinary
+  "urinary frequency", "urinary urgency", "painful urination", "blood in urine",
+  
+  // Other
+  "skin rash", "lump or mass", "other"
 ];
 
 // Default questions everyone gets
@@ -221,7 +246,7 @@ export default function MedicalIntakeForm() {
       address: '', emergencyContact: '', emergencyPhone: '',
       insurance: '', medicalId: ''
     },
-    symptoms: [{ type: '', severity: 1, description: '', frequency: 'intermittent', duration: 'days' }],
+    symptoms: [{ type: '', severity: 1, description: '', frequency: 'intermittent', duration: 'days', durationNumber: 1, durationUnit: 'day(s)' }],
     healthMetrics: {
       sleep: { quality: 5, hoursPerNight: 7 },
       mood: { overall: 5, stress: 5 },
@@ -235,46 +260,30 @@ export default function MedicalIntakeForm() {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [aiGeneratedQuestions, setAiGeneratedQuestions] = useState<Question[]>([]);
+  const [aiAnalysisData, setAiAnalysisData] = useState<any>(null);
   const [finalAnalysis, setFinalAnalysis] = useState<any>(null);
 
   // REAL OpenAI API call - this will charge your account
   const callOpenAI = async (patientContext: any): Promise<Question[]> => {
-    const OPENAI_API_KEY = process.env.NEXT_PUBLIC_OPENAI_API_KEY || 'your-openai-api-key-here';
-    
     try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      // Use our own API endpoint instead of calling OpenAI directly
+      const currentSymptoms = patientContext.symptoms
+        .filter((s: any) => s.type && s.type !== '')
+        .map((s: any) => s.type);
+      
+      const patientInfo = {
+        age: patientContext.demographics.age || '',
+        gender: patientContext.demographics.gender || ''
+      };
+
+      const response = await fetch('/api/symptoms', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_API_KEY}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: "gpt-4-turbo-preview",
-          messages: [
-            {
-              role: "system",
-              content: `You are a medical AI assistant generating diagnostic questions for patient intake. Based on the patient context, generate 5-8 targeted follow-up questions that would help narrow down potential diagnoses. 
-
-Return ONLY a valid JSON array of question objects with this exact structure:
-[
-  {
-    "id": "unique_id",
-    "text": "Question text?",
-    "type": "select" | "text" | "multiselect" | "yesno",
-    "options": ["option1", "option2"] (only for select/multiselect),
-    "required": true|false
-  }
-]
-
-Patient Context: ${JSON.stringify(patientContext, null, 2)}`
-            },
-            {
-              role: "user",
-              content: "Generate targeted diagnostic questions for this patient based on their symptoms, demographics, and health metrics."
-            }
-          ],
-          max_tokens: 1500,
-          temperature: 0.3
+          currentSymptoms,
+          patientInfo
         })
       });
 
@@ -283,14 +292,23 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
       }
 
       const data = await response.json();
-      const questionsJson = data.choices[0].message.content;
       
-      try {
-        return JSON.parse(questionsJson);
-      } catch (parseError) {
-        console.error('Failed to parse OpenAI response:', questionsJson);
-        return generateFallbackQuestions(patientContext);
+      // Store the full AI analysis data
+      if (data.success && data.data) {
+        setAiAnalysisData(data.data);
+        
+        // Convert the diagnostic questions to question format
+        if (data.data.diagnosticQuestions) {
+          return data.data.diagnosticQuestions.map((question: string, index: number) => ({
+            id: `ai_question_${index}`,
+            text: question.endsWith('?') ? question : question + '?',
+            type: 'yesno' as const,
+            required: true
+          }));
+        }
       }
+      
+      return generateFallbackQuestions(patientContext);
 
     } catch (error) {
       console.error('OpenAI API call failed:', error);
@@ -327,9 +345,40 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
     return fallback;
   };
 
+
+  // Check for medical patterns (for AI context, no alerts)
+  const checkMedicalPatterns = (symptoms: any[]) => {
+    const symptomTypes = symptoms.map(s => s.type.toLowerCase());
+    
+    // Medical pattern recognition for AI context
+    const patterns = {
+      neurological: ['headache', 'dizziness', 'confusion', 'memory issues', 'sensitivity to light', 'sensitivity to sound', 'balance problems', 'seizure', 'weakness', 'numbness', 'speech problems', 'vision changes'],
+      cardiovascular: ['chest_pain', 'shortness of breath', 'palpitations', 'rapid heartbeat', 'swelling legs'],
+      gastrointestinal: ['nausea', 'vomiting', 'abdominal pain', 'diarrhea', 'constipation', 'loss of appetite'],
+      respiratory: ['cough', 'shortness of breath'],
+      musculoskeletal: ['joint pain', 'muscle pain', 'back pain', 'neck pain'],
+      constitutional: ['fever', 'chills', 'fatigue', 'weight loss', 'weight gain']
+    };
+    
+    const detectedPatterns: { [key: string]: boolean } = {};
+    for (const [category, patternSymptoms] of Object.entries(patterns)) {
+      detectedPatterns[category] = patternSymptoms.some(pattern => 
+        symptomTypes.some(symptom => symptom.includes(pattern) || pattern.includes(symptom))
+      );
+    }
+    
+    return {
+      detectedPatterns,
+      affectedSystems: Object.keys(detectedPatterns).filter(key => detectedPatterns[key])
+    };
+  };
+
   // Generate questions based on current data
   const generateAIQuestions = async () => {
     setIsGeneratingQuestions(true);
+    
+    const currentSymptoms = patientData.symptoms.filter(s => s.type && s.type !== '');
+    const patternAnalysis = checkMedicalPatterns(currentSymptoms);
     
     const patientContext = {
       demographics: {
@@ -337,7 +386,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
         gender: patientData.patientInfo.gender,
         race: patientData.patientInfo.race
       },
-      symptoms: patientData.symptoms.filter(s => s.type && s.type !== '').map(s => ({
+      symptoms: currentSymptoms.map(s => ({
         type: s.type,
         severity: s.severity,
         frequency: s.frequency,
@@ -348,10 +397,11 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
       responses: patientData.responses,
       riskFactors: {
         highSeveritySymptoms: patientData.symptoms.some(s => s.severity >= 8),
-        multipleSymptoms: patientData.symptoms.filter(s => s.type).length > 1,
+        multipleSymptoms: currentSymptoms.length > 1,
         poorSleep: patientData.healthMetrics.sleep.quality <= 4,
         highStress: patientData.healthMetrics.mood.stress >= 7
-      }
+      },
+      affectedSystems: patternAnalysis.affectedSystems
     };
 
     try {
@@ -385,7 +435,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
       });
       return questions;
     }
-    if (currentPage === 5) return aiGeneratedQuestions; // AI questions
+    if (currentPage === 5) return []; // Results page
     return [];
   };
 
@@ -404,15 +454,33 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
     const updated = [...patientData.symptoms];
     updated[idx] = { ...updated[idx], [field]: value };
     setPatientData({ ...patientData, symptoms: updated });
+    
+    // Generate AI questions when symptom type is changed
+    if (field === 'type' && value && value !== '') {
+      setTimeout(() => {
+        const hasSymptoms = patientData.symptoms.some(s => s.type && s.type !== '');
+        if (hasSymptoms && aiGeneratedQuestions.length === 0) {
+          generateAIQuestions();
+        }
+      }, 500);
+    }
   };
 
   const addSymptom = () => {
     setPatientData({
       ...patientData,
       symptoms: [...patientData.symptoms, { 
-        type: '', severity: 1, description: '', frequency: 'intermittent', duration: 'days'
+        type: '', severity: 1, description: '', frequency: 'intermittent', duration: 'days', durationNumber: 1, durationUnit: 'day(s)'
       }]
     });
+    
+    // Generate AI questions when symptoms are added
+    setTimeout(() => {
+      const hasSymptoms = patientData.symptoms.some(s => s.type && s.type !== '');
+      if (hasSymptoms && aiGeneratedQuestions.length === 0) {
+        generateAIQuestions();
+      }
+    }, 500);
   };
 
   const removeSymptom = (idx: number) => {
@@ -433,11 +501,17 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
     });
   };
 
-  // Navigation
+  // Navigation with validation
   const nextPage = async () => {
-    if (currentPage === 4 && aiGeneratedQuestions.length === 0) {
-      await generateAIQuestions();
+    // Validate symptoms page
+    if (currentPage === 1) {
+      const hasValidSymptoms = patientData.symptoms.some(s => s.type && s.type !== '');
+      if (!hasValidSymptoms) {
+        alert('Please enter at least one symptom before proceeding.');
+        return;
+      }
     }
+    
     setCurrentPage(prev => prev + 1);
     setQuestionIndex(0);
   };
@@ -476,7 +550,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
           <select
             value={currentAnswer}
             onChange={(e) => handleQuestionResponse(question.id, e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
             required={question.required}
           >
             <option value="">Select an option</option>
@@ -517,7 +591,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
           <textarea
             value={currentAnswer}
             onChange={(e) => handleQuestionResponse(question.id, e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
             rows={3}
             required={question.required}
             placeholder="Please provide details..."
@@ -536,7 +610,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
         <div className="text-center mb-8">
           <div className="flex items-center justify-center mb-4">
             <div className="bg-blue-600 p-3 rounded-full mr-4">
-              <Heart className="w-8 h-8 text-white" />
+              ❤️
             </div>
             <h1 className="text-3xl font-bold text-gray-900">AI-Powered Medical Intake</h1>
           </div>
@@ -559,6 +633,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
           </div>
         </div>
 
+
         {/* Page Content */}
         {currentPage === 0 && (
           <div className="bg-white rounded-xl shadow-lg p-8">
@@ -569,7 +644,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 placeholder="Full Name *"
                 value={patientData.patientInfo.name}
                 onChange={handlePatientInfoChange}
-                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
                 required
               />
               <input
@@ -578,7 +653,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 placeholder="Age *"
                 value={patientData.patientInfo.age}
                 onChange={handlePatientInfoChange}
-                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
                 required
               />
               <input
@@ -586,13 +661,13 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 type="date"
                 value={patientData.patientInfo.dateOfBirth}
                 onChange={handlePatientInfoChange}
-                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
               />
               <select
                 name="gender"
                 value={patientData.patientInfo.gender}
                 onChange={handlePatientInfoChange}
-                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
                 required
               >
                 <option value="">Select Gender *</option>
@@ -606,14 +681,14 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 placeholder="Email"
                 value={patientData.patientInfo.email}
                 onChange={handlePatientInfoChange}
-                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
               />
               <input
                 name="phone"
                 placeholder="Phone"
                 value={patientData.patientInfo.phone}
                 onChange={handlePatientInfoChange}
-                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
               />
             </div>
           </div>
@@ -631,7 +706,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                       onClick={() => removeSymptom(idx)}
                       className="text-red-600 hover:text-red-800"
                     >
-                      <Trash2 className="w-5 h-5" />
+                      🗑️
                     </button>
                   )}
         </div>
@@ -640,7 +715,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
             <select
               value={symptom.type}
               onChange={e => handleSymptomChange(idx, "type", e.target.value)}
-                    className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
               required
             >
                     <option value="">Select symptom</option>
@@ -654,36 +729,50 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                   <select
                     value={symptom.frequency}
                     onChange={e => handleSymptomChange(idx, "frequency", e.target.value)}
-                    className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
                   >
                     <option value="constant">Constant</option>
                     <option value="intermittent">Intermittent</option>
                     <option value="once">One-time</option>
                   </select>
                   
-                  <select
-                    value={symptom.duration}
-                    onChange={e => handleSymptomChange(idx, "duration", e.target.value)}
-                    className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="hours">Hours</option>
-                    <option value="days">Days</option>
-                    <option value="weeks">Weeks</option>
-                    <option value="months">Months</option>
-                    <option value="years">Years</option>
-                  </select>
+                  <div className="flex gap-2">
+            <input
+              type="number"
+                      min={1}
+                      max={999}
+                      value={symptom.durationNumber || 1}
+                      onChange={e => handleSymptomChange(idx, "durationNumber", Number(e.target.value))}
+                      className="px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black w-20"
+                      placeholder="1"
+                    />
+                    <select
+                      value={symptom.durationUnit || 'days'}
+                      onChange={e => handleSymptomChange(idx, "durationUnit", e.target.value)}
+                      className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
+                    >
+                      <option value="hour(s)">Hour(s)</option>
+                      <option value="day(s)">Day(s)</option>
+                      <option value="week(s)">Week(s)</option>
+                      <option value="month(s)">Month(s)</option>
+                      <option value="year(s)">Year(s)</option>
+                    </select>
+                  </div>
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Severity: {symptom.severity}/10
                     </label>
-            <input
+                    <input
                       type="range"
-              min={1}
-              max={10}
-              value={symptom.severity}
-              onChange={e => handleSymptomChange(idx, "severity", Number(e.target.value))}
-                      className="w-full"
+                      min={1}
+                      max={10}
+                      value={symptom.severity}
+                      onChange={e => handleSymptomChange(idx, "severity", Number(e.target.value))}
+                      className="w-full h-2 bg-gradient-to-r from-green-500 via-yellow-500 to-red-500 rounded-lg appearance-none cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #10B981 0%, #F59E0B 50%, #EF4444 100%)`
+                      }}
                     />
                   </div>
                 </div>
@@ -691,7 +780,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 <textarea
                   value={symptom.description || ''}
               onChange={e => handleSymptomChange(idx, "description", e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
                   placeholder="Additional details..."
                   rows={2}
             />
@@ -702,7 +791,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
               onClick={addSymptom}
               className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
             >
-              <Plus className="w-4 h-4 mr-2" />
+              ➕
               Add Symptom
         </button>
           </div>
@@ -716,7 +805,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 <h3 className="text-lg font-semibold text-blue-900 mb-4">Sleep</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">
+                    <label className="block text-sm font-medium mb-2 text-black">
                       Quality: {patientData.healthMetrics.sleep.quality}/10
                     </label>
                     <input
@@ -731,25 +820,33 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                           sleep: { ...patientData.healthMetrics.sleep, quality: Number(e.target.value) }
                         }
                       })}
-                      className="w-full"
+                      className="w-full h-2 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-lg appearance-none cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #EF4444 0%, #F59E0B 50%, #10B981 100%)`
+                      }}
                     />
                   </div>
-                  <input
-                    type="number"
-                    min={0}
-                    max={24}
-                    step={0.5}
-                    value={patientData.healthMetrics.sleep.hoursPerNight}
-                    onChange={e => setPatientData({
-                      ...patientData,
-                      healthMetrics: {
-                        ...patientData.healthMetrics,
-                        sleep: { ...patientData.healthMetrics.sleep, hoursPerNight: Number(e.target.value) }
-                      }
-                    })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                    placeholder="Hours per night"
-                  />
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-black">
+                      Hours per night:
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={24}
+                      step={0.5}
+                      value={patientData.healthMetrics.sleep.hoursPerNight}
+                      onChange={e => setPatientData({
+                        ...patientData,
+                        healthMetrics: {
+                          ...patientData.healthMetrics,
+                          sleep: { ...patientData.healthMetrics.sleep, hoursPerNight: Number(e.target.value) }
+                        }
+                      })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-black focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Hours per night"
+                    />
+                  </div>
                 </div>
               </div>
               
@@ -757,7 +854,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 <h3 className="text-lg font-semibold text-purple-900 mb-4">Mood</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">
+                    <label className="block text-sm font-medium mb-2 text-black">
                       Overall: {patientData.healthMetrics.mood.overall}/10
                     </label>
                     <input
@@ -772,11 +869,14 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                           mood: { ...patientData.healthMetrics.mood, overall: Number(e.target.value) }
                         }
                       })}
-                      className="w-full"
+                      className="w-full h-2 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-lg appearance-none cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #EF4444 0%, #F59E0B 50%, #10B981 100%)`
+                      }}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">
+                    <label className="block text-sm font-medium mb-2 text-black">
                       Stress Level: {patientData.healthMetrics.mood.stress}/10
                     </label>
                     <input
@@ -791,7 +891,10 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                           mood: { ...patientData.healthMetrics.mood, stress: Number(e.target.value) }
                         }
                       })}
-                      className="w-full"
+                      className="w-full h-2 bg-gradient-to-r from-green-500 via-yellow-500 to-red-500 rounded-lg appearance-none cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #10B981 0%, #F59E0B 50%, #EF4444 100%)`
+                      }}
                     />
                   </div>
                 </div>
@@ -801,7 +904,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 <h3 className="text-lg font-semibold text-green-900 mb-4">Energy</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">
+                    <label className="block text-sm font-medium mb-2 text-black">
                       Energy Level: {patientData.healthMetrics.energy.level}/10
                     </label>
                     <input
@@ -816,26 +919,12 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                           energy: { ...patientData.healthMetrics.energy, level: Number(e.target.value) }
                         }
                       })}
-                      className="w-full"
+                      className="w-full h-2 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-lg appearance-none cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #EF4444 0%, #F59E0B 50%, #10B981 100%)`
+                      }}
                     />
                   </div>
-                  <select
-                    value={patientData.healthMetrics.energy.fatigueFrequency}
-                    onChange={e => setPatientData({
-                      ...patientData,
-                      healthMetrics: {
-                        ...patientData.healthMetrics,
-                        energy: { ...patientData.healthMetrics.energy, fatigueFrequency: e.target.value }
-                      }
-                    })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  >
-                    <option value="never">Never fatigued</option>
-                    <option value="rarely">Rarely fatigued</option>
-                    <option value="sometimes">Sometimes fatigued</option>
-                    <option value="often">Often fatigued</option>
-                    <option value="always">Always fatigued</option>
-                  </select>
                 </div>
       </div>
 
@@ -843,7 +932,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 <h3 className="text-lg font-semibold text-orange-900 mb-4">Appetite</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">
+                    <label className="block text-sm font-medium mb-2 text-black">
                       Appetite Level: {patientData.healthMetrics.appetite.level}/10
                     </label>
                     <input
@@ -858,25 +947,12 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                           appetite: { ...patientData.healthMetrics.appetite, level: Number(e.target.value) }
                         }
                       })}
-                      className="w-full"
+                      className="w-full h-2 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-lg appearance-none cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #EF4444 0%, #F59E0B 50%, #10B981 100%)`
+                      }}
                     />
                   </div>
-                  <select
-                    value={patientData.healthMetrics.appetite.changes}
-                    onChange={e => setPatientData({
-                      ...patientData,
-                      healthMetrics: {
-                        ...patientData.healthMetrics,
-                        appetite: { ...patientData.healthMetrics.appetite, changes: e.target.value }
-                      }
-                    })}
-                    className="w-full px-3 py-2 border rounded-lg"
-                  >
-                    <option value="no_change">No change</option>
-                    <option value="increased">Increased appetite</option>
-                    <option value="decreased">Decreased appetite</option>
-                    <option value="fluctuating">Fluctuating appetite</option>
-                  </select>
                 </div>
               </div>
             </div>
@@ -884,55 +960,48 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
         )}
 
         {/* Question Pages */}
-        {(currentPage === 3 || currentPage === 4 || currentPage === 5) && (
+        {(currentPage === 3 || currentPage === 4) && (
           <div>
             {currentPage === 3 && <h2 className="text-2xl font-bold text-gray-900 mb-6">General Medical Questions</h2>}
             {currentPage === 4 && <h2 className="text-2xl font-bold text-gray-900 mb-6">Symptom-Specific Questions</h2>}
-            {currentPage === 5 && (
-              <div className="mb-6">
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">AI-Generated Diagnostic Questions</h2>
-                {isGeneratingQuestions && (
-                  <div className="flex items-center text-blue-600 mb-4">
-                    <Brain className="w-5 h-5 mr-2 animate-pulse" />
-                    <span>Generating personalized questions with OpenAI...</span>
-        </div>
-      )}
-              </div>
-            )}
             
             {pageQuestions.length > 0 ? (
               <div>
                 {pageQuestions.map(question => renderQuestion(question))}
               </div>
-            ) : currentPage === 5 && !isGeneratingQuestions ? (
-              <div className="bg-white rounded-xl shadow-lg p-8 text-center">
-                <AlertCircle className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">No Additional Questions</h3>
-                <p className="text-gray-600">Based on your responses, no additional AI questions are needed at this time.</p>
-              </div>
             ) : currentPage === 4 && pageQuestions.length === 0 ? (
               <div className="bg-white rounded-xl shadow-lg p-8 text-center">
-                <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">No Symptom-Specific Questions</h3>
-                <p className="text-gray-600">No additional questions are available for your selected symptoms.</p>
+                {isGeneratingQuestions ? (
+                  <div>
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <h3 className="text-xl font-semibold text-black mb-2">Generating AI Questions...</h3>
+                    <p className="text-black">Analyzing your symptoms to create personalized diagnostic questions.</p>
+                  </div>
+                ) : (
+                  <div>
+                    ✅
+                    <h3 className="text-xl font-semibold text-black mb-2">No Symptom-Specific Questions</h3>
+                    <p className="text-black">Proceeding to results page.</p>
+                  </div>
+                )}
               </div>
             ) : null}
           </div>
         )}
 
         {/* Final Summary Page */}
-        {currentPage === 6 && (
+        {currentPage === 5 && (
           <div className="bg-white rounded-xl shadow-lg p-8">
             <div className="text-center mb-8">
-              <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">Assessment Complete</h2>
-              <p className="text-gray-600">Your comprehensive medical intake has been completed.</p>
+              ✅
+              <h2 className="text-2xl font-bold text-black mb-2">Assessment Complete</h2>
+              <p className="text-black">Your comprehensive medical intake has been completed.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="bg-blue-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-blue-900 mb-4">Patient Information</h3>
-                <div className="space-y-2 text-sm">
+                <h3 className="text-lg font-semibold text-black mb-4">Patient Information</h3>
+                <div className="space-y-2 text-sm text-black">
                   <p><strong>Name:</strong> {patientData.patientInfo.name}</p>
                   <p><strong>Age:</strong> {patientData.patientInfo.age}</p>
                   <p><strong>Gender:</strong> {patientData.patientInfo.gender}</p>
@@ -942,16 +1011,16 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
               </div>
 
               <div className="bg-red-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-red-900 mb-4">Symptoms Summary</h3>
+                <h3 className="text-lg font-semibold text-black mb-4">Symptoms Summary</h3>
                 <div className="space-y-2">
                   {patientData.symptoms.filter(s => s.type).map((symptom, idx) => (
-                    <div key={idx} className="text-sm">
+                    <div key={idx} className="text-sm text-black">
                       <p className="font-medium">
                         {symptom.type.charAt(0).toUpperCase() + symptom.type.slice(1).replace('_', ' ')}
-                        <span className="ml-2 text-red-600">Severity: {symptom.severity}/10</span>
+                        <span className="ml-2 text-black">Severity: {symptom.severity}/10</span>
                       </p>
-                      <p className="text-gray-600">
-                        {symptom.frequency} • {symptom.duration}
+                      <p className="text-black">
+                        {symptom.frequency} • {symptom.durationNumber || 1} {symptom.durationUnit || 'day(s)'}
                       </p>
                     </div>
                   ))}
@@ -959,8 +1028,8 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
               </div>
 
               <div className="bg-green-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-green-900 mb-4">Health Metrics</h3>
-                <div className="space-y-2 text-sm">
+                <h3 className="text-lg font-semibold text-black mb-4">Health Metrics</h3>
+                <div className="space-y-2 text-sm text-black">
                   <p><strong>Sleep Quality:</strong> {patientData.healthMetrics.sleep.quality}/10</p>
                   <p><strong>Hours per Night:</strong> {patientData.healthMetrics.sleep.hoursPerNight}</p>
                   <p><strong>Overall Mood:</strong> {patientData.healthMetrics.mood.overall}/10</p>
@@ -970,32 +1039,88 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
               </div>
 
               <div className="bg-purple-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-purple-900 mb-4">Key Responses</h3>
+                <h3 className="text-lg font-semibold text-black mb-4">Key Responses</h3>
                 <div className="space-y-2 text-sm max-h-48 overflow-y-auto">
                   {Object.entries(patientData.responses).map(([questionId, answer]) => (
                     <div key={questionId}>
-                      <p className="font-medium">{questionId.replace('_', ' ').toUpperCase()}:</p>
-                      <p className="text-gray-600 mb-2">{answer}</p>
+                      <p className="font-medium text-black">{questionId.replace('_', ' ').toUpperCase()}:</p>
+                      <p className="text-black mb-2">{answer}</p>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
+            {/* AI Analysis Section */}
+            {aiAnalysisData && (
+              <div className="mt-8 bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-lg border border-blue-200">
+                <h3 className="text-xl font-semibold mb-4 text-black flex items-center gap-2">
+                  🧠 AI-Powered Analysis
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="bg-white p-4 rounded-lg">
+                    <h4 className="font-semibold text-black mb-3">Potential Diagnoses</h4>
+                    <div className="space-y-2">
+                      {aiAnalysisData.potentialDiseases?.map((disease: string, idx: number) => (
+                        <div key={idx} className="text-sm text-black bg-red-50 p-2 rounded border-l-4 border-red-400">
+                          {disease}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-white p-4 rounded-lg">
+                    <h4 className="font-semibold text-black mb-3">Red Flags</h4>
+                    <div className="space-y-2">
+                      {aiAnalysisData.redFlags?.map((flag: string, idx: number) => (
+                        <div key={idx} className="text-sm text-black bg-yellow-50 p-2 rounded border-l-4 border-yellow-400">
+                          ⚠️ {flag}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-white p-4 rounded-lg">
+                    <h4 className="font-semibold text-black mb-3">Recommendations</h4>
+                    <div className="space-y-2">
+                      {aiAnalysisData.recommendations?.map((rec: string, idx: number) => (
+                        <div key={idx} className="text-sm text-black bg-green-50 p-2 rounded border-l-4 border-green-400">
+                          ✅ {rec}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="mt-8 p-6 bg-yellow-50 border border-yellow-200 rounded-lg">
               <div className="flex items-start">
-                <AlertCircle className="w-6 h-6 text-yellow-600 mr-3 mt-0.5" />
+                ⚠️
                 <div>
-                  <h4 className="font-semibold text-yellow-900 mb-2">Important Notice</h4>
-                  <p className="text-yellow-800 text-sm">
+                  <h4 className="font-semibold text-black mb-2">Important Notice</h4>
+                  <p className="text-black text-sm">
                     This assessment is for informational purposes only and does not constitute medical advice. 
                     Please consult with a qualified healthcare provider for proper medical evaluation and treatment.
                   </p>
                 </div>
               </div>
-            </div>
+      </div>
 
-            <div className="mt-8 text-center">
+            <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+              <button
+                onClick={() => {
+                  // Generate doctor report - placeholder for team functionality
+                  console.log('Generating doctor report...', {
+                    patientData,
+                    aiAnalysis: aiAnalysisData,
+                    responses: patientData.responses
+                  });
+                  alert('Doctor report generation - This will be implemented by your team members!');
+                }}
+                className="px-8 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center justify-center gap-2"
+              >
+                📋 Generate Doctor Report
+              </button>
+              
               <button
                 onClick={() => {
                   // Reset form for new patient
@@ -1007,7 +1132,7 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                       address: '', emergencyContact: '', emergencyPhone: '',
                       insurance: '', medicalId: ''
                     },
-                    symptoms: [{ type: '', severity: 1, description: '', frequency: 'intermittent', duration: 'days' }],
+                    symptoms: [{ type: '', severity: 1, description: '', frequency: 'intermittent', duration: 'days', durationNumber: 1, durationUnit: 'day(s)' }],
                     healthMetrics: {
                       sleep: { quality: 5, hoursPerNight: 7 },
                       mood: { overall: 5, stress: 5 },
@@ -1017,14 +1142,15 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                     responses: {}
                   });
                   setAiGeneratedQuestions([]);
+                  setAiAnalysisData(null);
                 }}
-                className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium flex items-center justify-center gap-2"
               >
-                Start New Assessment
+                🔄 Start New Assessment
               </button>
             </div>
-          </div>
-        )}
+        </div>
+      )}
 
         {/* Navigation */}
         <div className="flex justify-between mt-8">
@@ -1037,21 +1163,21 @@ Patient Context: ${JSON.stringify(patientContext, null, 2)}`
                 : 'bg-gray-600 text-white hover:bg-gray-700'
             }`}
           >
-            <ArrowLeft className="w-4 h-4 mr-2" />
+            ⬅️
             Previous
           </button>
 
           <button
             onClick={nextPage}
-            disabled={currentPage === 6}
+            disabled={currentPage === 5}
             className={`flex items-center px-6 py-3 rounded-lg font-medium transition-all ${
-              currentPage === 6
+              currentPage === 5
                 ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
                 : 'bg-blue-600 text-white hover:bg-blue-700'
             }`}
           >
             Next
-            <ArrowRight className="w-4 h-4 ml-2" />
+            ➡️
           </button>
         </div>
       </div>
