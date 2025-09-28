@@ -14,7 +14,7 @@ type Symptom = {
 
 type PatientData = {
   patientInfo: {
-    name: string; age: string; dateOfBirth: string; gender: string;
+    name: string; dateOfBirth: string; gender: string;
     race: string; ethnicity: string; email: string; phone: string;
     address: string; emergencyContact: string; emergencyPhone: string;
     insurance: string; medicalId: string;
@@ -237,11 +237,24 @@ const symptomQuestions: { [symptom: string]: Question[] } = {
   ]
 };
 
+// Helper function to calculate age from date of birth
+const calculateAge = (dateOfBirth: string): number => {
+  if (!dateOfBirth) return 0;
+  const today = new Date();
+  const birthDate = new Date(dateOfBirth);
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+  return age;
+};
+
 export default function MedicalIntakeForm() {
   const [currentPage, setCurrentPage] = useState(0);
   const [patientData, setPatientData] = useState<PatientData>({
     patientInfo: {
-      name: '', age: '', dateOfBirth: '', gender: '',
+      name: '', dateOfBirth: '', gender: '',
       race: '', ethnicity: '', email: '', phone: '',
       address: '', emergencyContact: '', emergencyPhone: '',
       insurance: '', medicalId: ''
@@ -382,7 +395,7 @@ export default function MedicalIntakeForm() {
     
     const patientContext = {
       demographics: {
-        age: parseInt(patientData.patientInfo.age) || 0,
+        age: calculateAge(patientData.patientInfo.dateOfBirth),
         gender: patientData.patientInfo.gender,
         race: patientData.patientInfo.race
       },
@@ -509,8 +522,8 @@ export default function MedicalIntakeForm() {
         alert('Please enter your name before proceeding.');
         return;
       }
-      if (!patientData.patientInfo.age.trim()) {
-        alert('Please enter your age before proceeding.');
+      if (!patientData.patientInfo.dateOfBirth.trim()) {
+        alert('Please enter your date of birth before proceeding.');
         return;
       }
       if (!patientData.patientInfo.gender) {
@@ -664,18 +677,9 @@ export default function MedicalIntakeForm() {
                 required
               />
               <input
-                name="age"
-                type="number"
-                placeholder="Age *"
-                value={patientData.patientInfo.age}
-                onChange={handlePatientInfoChange}
-                className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
-                required
-              />
-              <input
                 name="dateOfBirth"
                 type="date"
-                placeholder="Date of Birth"
+                placeholder="Date of Birth *"
                 value={patientData.patientInfo.dateOfBirth}
                 onChange={handlePatientInfoChange}
                 className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
@@ -1021,7 +1025,7 @@ export default function MedicalIntakeForm() {
                 <h3 className="text-lg font-semibold text-black mb-4">Patient Information</h3>
                 <div className="space-y-2 text-sm text-black">
                   <p><strong>Name:</strong> {patientData.patientInfo.name}</p>
-                  <p><strong>Age:</strong> {patientData.patientInfo.age}</p>
+                  <p><strong>Age:</strong> {calculateAge(patientData.patientInfo.dateOfBirth)} years old</p>
                   <p><strong>Gender:</strong> {patientData.patientInfo.gender}</p>
                   {patientData.patientInfo.email && <p><strong>Email:</strong> {patientData.patientInfo.email}</p>}
                   {patientData.patientInfo.phone && <p><strong>Phone:</strong> {patientData.patientInfo.phone}</p>}
@@ -1151,7 +1155,7 @@ export default function MedicalIntakeForm() {
                   setCurrentPage(0);
                   setPatientData({
                     patientInfo: {
-                      name: '', age: '', dateOfBirth: '', gender: '',
+                      name: '', dateOfBirth: '', gender: '',
                       race: '', ethnicity: '', email: '', phone: '',
                       address: '', emergencyContact: '', emergencyPhone: '',
                       insurance: '', medicalId: ''
