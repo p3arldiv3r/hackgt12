@@ -343,23 +343,37 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
         doc.text("Body Pain Assessment", 20, 85);
         doc.addImage(img, "PNG", 20, 90, 70, 100);
 
-        // Legend under the heatmap (matches on-page legend)
-const circlePositions = [
-  { x: 20, y: 190 },
-  { x: 36, y: 190 },
-  { x: 51, y: 190 },
-  { x: 64, y: 190 },
-  { x: 79, y: 190 },
-];
+        // Legend under the heatmap with dynamic alignment
+        const legendStartX_Dynamic = 20;
+        const legendY_Dynamic = 195;
+        const textY_Dynamic = legendY_Dynamic - 8;
+        const itemSpacing = 5; // Gap between items
 
-[1, 2, 3, 4, 5].forEach((lvl, i) => {
-  const [r, g, b] = severityRGB[lvl as 1 | 2 | 3 | 4 | 5];
-  const { x, y } = circlePositions[i];
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(40, 40, 40);
 
-  doc.setFillColor(r, g, b);
-  doc.setDrawColor(51, 51, 51);
-  doc.circle(x, y, 1, "FD");
-});
+        let currentX = legendStartX_Dynamic;
+
+        [1, 2, 3, 4, 5].forEach((lvl, i) => {
+          const [r, g, b] = severityRGB[lvl as 1 | 2 | 3 | 4 | 5];
+          const label = `Level ${lvl}`;
+          const textWidth = doc.getTextWidth(label);
+          
+          // Center circle under text
+          const circleX = currentX + (textWidth / 2);
+          
+          // Draw text
+          doc.text(label, currentX, textY_Dynamic);
+          
+          // Draw circle
+          doc.setFillColor(r, g, b);
+          doc.setDrawColor(51, 51, 51);
+          doc.circle(circleX, legendY_Dynamic, 1, "FD");
+          
+          // Move to next position
+          currentX += textWidth + itemSpacing;
+        });
 
       }
 
