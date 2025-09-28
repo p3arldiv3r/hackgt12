@@ -675,9 +675,11 @@ export default function MedicalIntakeForm() {
               <input
                 name="dateOfBirth"
                 type="date"
+                placeholder="Date of Birth"
                 value={patientData.patientInfo.dateOfBirth}
                 onChange={handlePatientInfoChange}
                 className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
+                required
               />
               <select
                 name="gender"
