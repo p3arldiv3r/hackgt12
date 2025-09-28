@@ -345,11 +345,11 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
 
         // Legend under the heatmap (matches on-page legend)
 const circlePositions = [
-  { x: 27, y: 190 },
-  { x: 42, y: 190 },
-  { x: 57, y: 190 },
-  { x: 71, y: 190 },
-  { x: 86, y: 190 },
+  { x: 20, y: 190 },
+  { x: 36, y: 190 },
+  { x: 51, y: 190 },
+  { x: 64, y: 190 },
+  { x: 79, y: 190 },
 ];
 
 [1, 2, 3, 4, 5].forEach((lvl, i) => {
@@ -612,7 +612,7 @@ const circlePositions = [
             <h3 className="mb-4 text-lg font-semibold text-gray-900">Symptom Progression</h3>
             <div id="timeline-chart" className="h-[180px]">
               <ResponsiveContainer width="100%" height="100%">
-               <LineChart data={TIMELINE_DATA} isAnimationActive={!isGeneratingPDF}>
+               <LineChart data={TIMELINE_DATA}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="day" fontSize={12} />
                 <YAxis domain={[0, 6]} />
