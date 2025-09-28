@@ -503,6 +503,22 @@ export default function MedicalIntakeForm() {
 
   // Navigation with validation
   const nextPage = async () => {
+    // Validate patient info page
+    if (currentPage === 0) {
+      if (!patientData.patientInfo.name.trim()) {
+        alert('Please enter your name before proceeding.');
+        return;
+      }
+      if (!patientData.patientInfo.age.trim()) {
+        alert('Please enter your age before proceeding.');
+        return;
+      }
+      if (!patientData.patientInfo.gender) {
+        alert('Please select your gender before proceeding.');
+        return;
+      }
+    }
+    
     // Validate symptoms page
     if (currentPage === 1) {
       const hasValidSymptoms = patientData.symptoms.some(s => s.type && s.type !== '');
