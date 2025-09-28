@@ -94,6 +94,23 @@ const getHeatmapColor = (severity: SeverityLevel) => severityFill[severity] ?? s
 const pointSize = (severity: SeverityLevel) => 8 + severity * 3;
 const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
+// Helper function to calculate age from date of birth
+const calculateAge = (dateOfBirth: string): number => {
+  if (!dateOfBirth) return 0;
+  const today = new Date();
+  const birthDate = new Date(dateOfBirth);
+  
+  // Check if the date is valid
+  if (isNaN(birthDate.getTime())) return 0;
+  
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+  return age;
+};
+
 // Sanitize colors/filters in the cloned DOM for html2canvas to avoid lab()/oklch() errors
 const safeOnClone = (doc: Document, rootId: string) => {
   const style = doc.createElement("style");
@@ -187,6 +204,7 @@ interface PatientReportSystemProps {
     patientInfo?: {
       name?: string;
       age?: string;
+      dateOfBirth?: string;
       gender?: string;
     };
     symptoms?: Array<{
@@ -253,7 +271,9 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
       PATIENT_DATA: convertedSymptoms,
       PATIENT_INFO: {
         name: patientData.patientInfo?.name || "Unknown Patient",
-        age: parseInt(patientData.patientInfo?.age || "0") || 0,
+        age: patientData.patientInfo?.dateOfBirth 
+          ? calculateAge(patientData.patientInfo.dateOfBirth)
+          : parseInt(patientData.patientInfo?.age || "0") || 0,
         gender: patientData.patientInfo?.gender || "Unknown",
         date: new Date().toISOString().split('T')[0],
         chiefComplaint: symptoms.map((s) => s.type).join(", ") || "No symptoms reported",
