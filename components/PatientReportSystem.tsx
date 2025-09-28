@@ -44,6 +44,33 @@ interface TimelinePoint {
 }
 
 // -----------------------------
+// Sample Data (replace with real data)
+// -----------------------------
+const PATIENT_DATA: PatientPoint[] = [
+  { region: "head", x: 100, y: 50, severity: 3, symptoms: ["headache", "dizziness"], duration: "3 days" },
+  { region: "chest", x: 100, y: 120, severity: 5, symptoms: ["chest pain", "shortness of breath"], duration: "1 week" },
+  { region: "leftShoulder", x: 70, y: 100, severity: 2, symptoms: ["stiffness"], duration: "2 weeks" },
+  { region: "rightKnee", x: 110, y: 280, severity: 4, symptoms: ["pain", "swelling"], duration: "5 days" },
+  { region: "abdomen", x: 100, y: 160, severity: 1, symptoms: ["mild discomfort"], duration: "1 day" },
+];
+
+const PATIENT_INFO: PatientInfo = {
+  name: "John Smith",
+  age: 45,
+  gender: "Male",
+  date: "2025-09-27",
+  chiefComplaint: "Chest pain and difficulty breathing",
+};
+
+const TIMELINE_DATA: TimelinePoint[] = [
+  { day: "Day 1", severity: 2, symptoms: 1 },
+  { day: "Day 2", severity: 3, symptoms: 2 },
+  { day: "Day 3", severity: 4, symptoms: 3 },
+  { day: "Day 4", severity: 5, symptoms: 4 },
+  { day: "Today", severity: 4, symptoms: 5 },
+];
+
+// -----------------------------
 // Utilities
 // -----------------------------
 const severityFill: Record<SeverityLevel, string> = {
@@ -100,107 +127,63 @@ const safeOnClone = (doc: Document, rootId: string) => {
   doc.head.appendChild(style);
 };
 
-// -----------------------------
-// Component Props
-// -----------------------------
-interface PatientReportSystemProps {
-  patientData?: {
-    patientInfo?: {
-      name?: string;
-      age?: string;
-      gender?: string;
-    };
-    symptoms?: Array<{
-      type: string;
-      severity: number;
-      durationNumber?: number;
-      durationUnit?: string;
-    }>;
-  };
-  aiAnalysis?: {
-    potentialDiseases?: string[];
-    recommendations?: string[];
-    redFlags?: string[];
-  };
-}
+// Wait for webfonts to be ready (if any)
+const waitForFonts = async () => {
+  if ((document as any).fonts?.ready) {
+    try { await (document as any).fonts.ready; } catch {}
+  }
+};
+
+// Wait for all <img> inside a root to decode
+const waitForImages = async (root: HTMLElement) => {
+  const imgs = Array.from(root.querySelectorAll("img"));
+  await Promise.all(
+    imgs.map(async (img) => {
+      if (img.complete && (img as any).naturalWidth !== 0) return;
+      try { await (img as any).decode?.(); } catch {}
+      // Fallback to load event if decode isn't supported
+      if (!img.complete) {
+        await new Promise<void>((res) => {
+          img.addEventListener("load", () => res(), { once: true });
+          img.addEventListener("error", () => res(), { once: true });
+        });
+      }
+    })
+  );
+};
+
+// Ensure the element's size has "settled" for a couple animation frames
+const waitForStableLayout = async (el: HTMLElement, frames = 2) => {
+  const waitRAF = () => new Promise<number>((r) => requestAnimationFrame(r));
+  let last = el.getBoundingClientRect();
+  let stable = 0;
+
+  while (stable < frames) {
+    await waitRAF();
+    const cur = el.getBoundingClientRect();
+    const moved =
+      Math.abs(cur.width - last.width) > 0.5 ||
+      Math.abs(cur.height - last.height) > 0.5;
+    if (moved) stable = 0; else stable += 1;
+    last = cur;
+  }
+};
+
+// One-shot guard for a container (fonts + images + stable layout)
+const ensureReadyForSnapshot = async (root: HTMLElement) => {
+  await waitForFonts();
+  await waitForImages(root);
+  // Give React/Recharts a breath to finish any late paints
+  await new Promise((r) => setTimeout(r, 50));
+  await waitForStableLayout(root, 2);
+};
+
 
 // -----------------------------
 // Component
 // -----------------------------
-const PatientReportSystem: React.FC<PatientReportSystemProps> = ({ 
-  patientData, 
-  aiAnalysis 
-}) => {
+const PatientReportSystem: React.FC = () => {
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
-
-  // Convert your patient data to visualization format
-  const convertPatientData = () => {
-    if (!patientData) {
-      // Fallback data if no patient data provided
-      return {
-        PATIENT_DATA: [
-          { region: "head", x: 100, y: 50, severity: 3, symptoms: ["headache", "dizziness"], duration: "3 days" },
-          { region: "chest", x: 100, y: 120, severity: 5, symptoms: ["chest pain", "shortness of breath"], duration: "1 week" },
-        ],
-        PATIENT_INFO: {
-          name: "Sample Patient",
-          age: 45,
-          gender: "Unknown",
-          date: new Date().toISOString().split('T')[0],
-          chiefComplaint: "Multiple symptoms reported",
-        },
-        TIMELINE_DATA: [
-          { day: "Day 1", severity: 2, symptoms: 1 },
-          { day: "Day 2", severity: 3, symptoms: 2 },
-          { day: "Day 3", severity: 4, symptoms: 3 },
-          { day: "Today", severity: 4, symptoms: 5 },
-        ]
-      };
-    }
-
-    // Convert your symptom data to visualization format
-    const symptoms = patientData.symptoms || [];
-    const convertedSymptoms = symptoms.map((symptom, index: number) => {
-      // Map symptom types to body regions (simplified mapping)
-      const regionMap: { [key: string]: { x: number; y: number; region: string } } = {
-        'headache': { x: 100, y: 50, region: 'head' },
-        'chest pain': { x: 100, y: 120, region: 'chest' },
-        'abdominal pain': { x: 100, y: 160, region: 'abdomen' },
-        'back pain': { x: 100, y: 200, region: 'back' },
-        'joint pain': { x: 110, y: 280, region: 'knee' },
-      };
-
-      const regionData = regionMap[symptom.type] || { x: 100 + index * 20, y: 150 + index * 20, region: 'other' };
-      
-      return {
-        region: regionData.region,
-        x: regionData.x,
-        y: regionData.y,
-        severity: Math.min(5, Math.max(1, Math.round(symptom.severity / 2))) as SeverityLevel,
-        symptoms: [symptom.type],
-        duration: `${symptom.durationNumber || 1} ${symptom.durationUnit || 'days'}`
-      };
-    });
-
-    return {
-      PATIENT_DATA: convertedSymptoms,
-      PATIENT_INFO: {
-        name: patientData.patientInfo?.name || "Unknown Patient",
-        age: parseInt(patientData.patientInfo?.age || "0") || 0,
-        gender: patientData.patientInfo?.gender || "Unknown",
-        date: new Date().toISOString().split('T')[0],
-        chiefComplaint: symptoms.map((s) => s.type).join(", ") || "No symptoms reported",
-      },
-      TIMELINE_DATA: [
-        { day: "Day 1", severity: 2, symptoms: 1 },
-        { day: "Day 2", severity: 3, symptoms: 2 },
-        { day: "Day 3", severity: 4, symptoms: 3 },
-        { day: "Today", severity: Math.round(symptoms.reduce((sum: number, s) => sum + s.severity, 0) / symptoms.length / 2) || 3, symptoms: symptoms.length },
-      ]
-    };
-  };
-
-  const { PATIENT_DATA, PATIENT_INFO, TIMELINE_DATA } = convertPatientData();
 
   const generatePDF = async () => {
     setIsGeneratingPDF(true);
@@ -220,9 +203,9 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
 
       // Patient Info
       doc.setFillColor(248, 249, 250);
-      doc.rect(15, 35, 180, 35, "F");
+      doc.rect(15, 35, 180, 42, 'F');
       doc.setDrawColor(200, 200, 200);
-      doc.rect(15, 35, 180, 35, "S");
+      doc.rect(15, 35, 180, 42, 'S');
 
       doc.setFontSize(11);
       doc.setTextColor(60, 60, 60);
@@ -238,17 +221,15 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
       doc.text(`Date: ${PATIENT_INFO.date}`, 20, 62);
       doc.text(`Chief Complaint: ${PATIENT_INFO.chiefComplaint}`, 20, 69);
 
-      // Body Heatmap
+      // Body Heatmap (with scroll guard + sanitizer)
       const heatmapEl = document.getElementById("body-heatmap");
       if (heatmapEl) {
         const heatmapCanvas = await html2canvas(heatmapEl, {
           backgroundColor: "#ffffff",
           scale: 2,
           useCORS: true,
-          allowTaint: true,
-          foreignObjectRendering: true,
           scrollX: 0,
-          scrollY: -window.scrollY,
+          scrollY: -window.scrollY, // prevent viewport cropping
           onclone: (clonedDoc) => safeOnClone(clonedDoc, "body-heatmap"),
         });
         const img = heatmapCanvas.toDataURL("image/png");
@@ -257,6 +238,25 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
         doc.setFont("helvetica", "bold");
         doc.text("Body Pain Assessment", 20, 85);
         doc.addImage(img, "PNG", 20, 90, 70, 100);
+
+        // Legend under the heatmap (matches on-page legend)
+const circlePositions = [
+  { x: 27, y: 190 },
+  { x: 42, y: 190 },
+  { x: 57, y: 190 },
+  { x: 71, y: 190 },
+  { x: 86, y: 190 },
+];
+
+[1, 2, 3, 4, 5].forEach((lvl, i) => {
+  const [r, g, b] = severityRGB[lvl as 1 | 2 | 3 | 4 | 5];
+  const { x, y } = circlePositions[i];
+
+  doc.setFillColor(r, g, b);
+  doc.setDrawColor(51, 51, 51);
+  doc.circle(x, y, 1, "FD");
+});
+
       }
 
       // Severity Chart
@@ -266,8 +266,6 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
           backgroundColor: "#ffffff",
           scale: 2,
           useCORS: true,
-          allowTaint: true,
-          foreignObjectRendering: true,
           onclone: (clonedDoc) => safeOnClone(clonedDoc, "severity-chart"),
         });
         const img = c.toDataURL("image/png");
@@ -283,8 +281,6 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
           backgroundColor: "#ffffff",
           scale: 2,
           useCORS: true,
-          allowTaint: true,
-          foreignObjectRendering: true,
           onclone: (clonedDoc) => safeOnClone(clonedDoc, "timeline-chart"),
         });
         const img = c.toDataURL("image/png");
@@ -293,39 +289,93 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
         doc.addImage(img, "PNG", 105, 160, 85, 45);
       }
 
-      // AI Analysis Section (if available)
-      if (aiAnalysis) {
-        let y = 215;
-        doc.setFontSize(12);
+      // Table
+      let y = 215;
+      doc.setFontSize(12);
+      doc.setTextColor(40, 40, 40);
+      doc.setFont("helvetica", "bold");
+      doc.text("Detailed Symptom Summary", 20, y - 5);
+
+      doc.setFillColor(66, 139, 202);
+      doc.rect(15, y, 180, 12, 'F');
+      doc.setDrawColor(66, 139, 202);
+      doc.rect(15, y, 180, 12, "S");
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(10);
+      doc.text("Body Region", 20, y + 8);
+      doc.text("Severity", 70, y + 8);
+      doc.text("Symptoms", 95, y + 8);
+      doc.text("Duration", 155, y + 8);
+      y += 12;
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(40, 40, 40);
+
+      const rows = PATIENT_DATA.filter((p) => p.severity > 0);
+      rows.forEach((item, idx) => {
+        if (y > 255) {
+          doc.addPage();
+          y = 20;
+        }
+
+        doc.setFillColor(idx % 2 === 0 ? 248 : 255, idx % 2 === 0 ? 249 : 255, idx % 2 === 0 ? 250 : 255);
+        doc.rect(15, y, 180, 10, "F");
+        doc.setDrawColor(220, 220, 220);
+        doc.rect(15, y, 180, 10, "S");
+
         doc.setTextColor(40, 40, 40);
+        doc.text(capitalize(item.region), 20, y + 7);
+
+        const sevRGB = severityRGB[(item.severity || 1) as Exclude<SeverityLevel, 0>] ?? [40, 40, 40];
+        doc.setTextColor(...sevRGB);
         doc.setFont("helvetica", "bold");
-        doc.text("AI Analysis Summary", 20, y);
+        doc.text(String(item.severity), 75, y + 7);
 
-        doc.setFontSize(10);
         doc.setFont("helvetica", "normal");
-        doc.setTextColor(60, 60, 60);
-        
-        if (aiAnalysis.potentialDiseases) {
-          doc.text("Potential Diagnoses:", 20, y + 10);
-          aiAnalysis.potentialDiseases.slice(0, 3).forEach((disease: string, i: number) => {
-            doc.text(`• ${disease}`, 25, y + 17 + i * 7);
-          });
-          y += 40;
-        }
+        doc.setTextColor(40, 40, 40);
 
-        if (aiAnalysis.recommendations) {
-          doc.text("Recommendations:", 20, y);
-          aiAnalysis.recommendations.slice(0, 3).forEach((rec: string, i: number) => {
-            doc.text(`• ${rec}`, 25, y + 7 + i * 7);
-          });
-          y += 30;
-        }
+        const symptoms = item.symptoms.join(", ");
+        const truncated = symptoms.length > 45 ? `${symptoms.slice(0, 42)}...` : symptoms;
+        doc.text(truncated, 95, y + 7);
+        doc.text(item.duration, 155, y + 7);
+
+        y += 10;
+      });
+
+      // Recommendations
+      y += 12;
+      if (y > 250) {
+        doc.addPage();
+        y = 20;
       }
+
+      doc.setFillColor(240, 248, 255);
+      doc.rect(15, y - 5, 180, 45, 'F');
+      doc.setDrawColor(66, 139, 202);
+      doc.rect(15, y - 5, 180, 45, "S");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.setTextColor(40, 40, 40);
+      doc.text("Clinical Recommendations", 20, y + 5);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(60, 60, 60);
+
+      const recommendations = [
+        "Priority areas: Chest (severity 5), Right Knee (severity 4).",
+        "Recommend immediate cardiac evaluation for chest symptoms.",
+        "Consider orthopedic consultation for knee pain and swelling.",
+        "Schedule follow-up in 48–72 hours to monitor progression.",
+      ];
+      recommendations.forEach((rec, i) => doc.text(`• ${rec}`, 20, y + 15 + i * 6));
 
       // Footer
       doc.setFontSize(8);
       doc.setTextColor(120, 120, 120);
-      doc.text("Generated by AI-Powered Medical Intake System", 20, 285);
+      doc.text("Generated by Patient Assessment System", 20, 285);
       doc.text(`Report Date: ${new Date().toLocaleDateString()}`, 130, 285);
       doc.text("Page 1", 185, 285, { align: "right" });
 
@@ -338,7 +388,7 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
     }
   };
 
-  const activeData = PATIENT_DATA.filter((p: PatientPoint) => p.severity > 0);
+  const activeData = PATIENT_DATA.filter((p) => p.severity > 0);
 
   return (
     <div className="mx-auto min-h-screen max-w-7xl bg-gray-50 p-6">
@@ -376,19 +426,18 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
       </section>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Body Heatmap */}
+        {/* Body Heatmap (responsive image + overlay, unclipped legend) */}
         <section className="rounded-lg bg-white p-6 shadow-md">
           <h2 className="mb-4 text-xl font-semibold text-gray-900">Body Pain Assessment</h2>
           <div id="body-heatmap" className="flex flex-col items-center gap-3 pb-4">
             <div className="relative w-full max-w-[260px] aspect-[1/2]">
-              {/* Body outline image */}
               <Image
                 src="/body-outline.jpg"
-                alt="Body Outline"
-                width={200}
-                height={400}
-                className="w-full h-full object-contain border rounded-md"
-                style={{ zIndex: 0 }}
+                alt="Human body outline"
+                fill
+                sizes="(max-width: 768px) 60vw, 260px"
+                className="rounded-md border object-contain"
+                priority
               />
               <svg
                 viewBox="0 0 200 400"
@@ -397,7 +446,7 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
                 aria-label="Pain points overlay"
                 role="img"
               >
-                {PATIENT_DATA.map((pt: PatientPoint, i: number) => (
+                {PATIENT_DATA.map((pt, i) => (
                   <circle
                     key={`${pt.region}-${i}`}
                     cx={pt.x}
@@ -446,7 +495,7 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
                     labelFormatter={(label: string) => `Region: ${capitalize(label)}`}
                   />
                   <Bar dataKey="severity">
-                    {PATIENT_DATA.map((d: PatientPoint, idx: number) => (
+                    {PATIENT_DATA.map((d, idx) => (
                       <Cell key={idx} fill={getHeatmapColor(d.severity)} />
                     ))}
                   </Bar>
@@ -459,14 +508,28 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
             <h3 className="mb-4 text-lg font-semibold text-gray-900">Symptom Progression</h3>
             <div id="timeline-chart" className="h-[180px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={TIMELINE_DATA}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="day" fontSize={12} />
-                  <YAxis domain={[0, 6]} />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="severity" stroke="#f44336" strokeWidth={3} dot={{ r: 4 }} />
-                  <Line type="monotone" dataKey="symptoms" stroke="#ff9800" strokeWidth={2} dot={{ r: 3 }} />
-                </LineChart>
+               <LineChart data={TIMELINE_DATA} isAnimationActive={!isGeneratingPDF}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="day" fontSize={12} />
+                <YAxis domain={[0, 6]} />
+                <Tooltip />
+                <Line
+                  type="monotone"
+                  dataKey="severity"
+                  stroke="#f44336"
+                  strokeWidth={3}
+                  dot={{ r: 4 }}
+                  isAnimationActive={!isGeneratingPDF}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="symptoms"
+                  stroke="#ff9800"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  isAnimationActive={!isGeneratingPDF}
+                />
+              </LineChart>
               </ResponsiveContainer>
             </div>
           </section>
@@ -477,7 +540,7 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
       <section className="mt-6 rounded-lg bg-white p-6 shadow-md">
         <h3 className="mb-4 text-xl font-semibold text-gray-900">Detailed Symptom Summary</h3>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {activeData.map((pt: PatientPoint, i: number) => (
+          {activeData.map((pt, i) => (
             <article key={`${pt.region}-${i}`} className="rounded-lg border border-gray-200 p-4">
               <header className="mb-2 flex items-center gap-2">
                 <span className="inline-block h-4 w-4 rounded-full" style={{ backgroundColor: getHeatmapColor(pt.severity) }} />
@@ -494,51 +557,6 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
           ))}
         </div>
       </section>
-
-      {/* AI Analysis Display */}
-      {aiAnalysis && (
-        <section className="mt-6 rounded-lg bg-white p-6 shadow-md">
-          <h3 className="mb-4 text-xl font-semibold text-gray-900">AI Analysis</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {aiAnalysis.potentialDiseases && (
-              <div className="bg-red-50 p-4 rounded-lg">
-                <h4 className="font-semibold text-black mb-3">Potential Diagnoses</h4>
-                <div className="space-y-2">
-                  {aiAnalysis.potentialDiseases.map((disease: string, idx: number) => (
-                    <div key={idx} className="text-sm text-black bg-red-100 p-2 rounded border-l-4 border-red-400">
-                      {disease}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {aiAnalysis.recommendations && (
-              <div className="bg-green-50 p-4 rounded-lg">
-                <h4 className="font-semibold text-black mb-3">Recommendations</h4>
-                <div className="space-y-2">
-                  {aiAnalysis.recommendations.map((rec: string, idx: number) => (
-                    <div key={idx} className="text-sm text-black bg-green-100 p-2 rounded border-l-4 border-green-400">
-                      ✅ {rec}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {aiAnalysis.redFlags && (
-              <div className="bg-yellow-50 p-4 rounded-lg">
-                <h4 className="font-semibold text-black mb-3">Red Flags</h4>
-                <div className="space-y-2">
-                  {aiAnalysis.redFlags.map((flag: string, idx: number) => (
-                    <div key={idx} className="text-sm text-black bg-yellow-100 p-2 rounded border-l-4 border-yellow-400">
-                      ⚠️ {flag}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-      )}
     </div>
   );
 };
