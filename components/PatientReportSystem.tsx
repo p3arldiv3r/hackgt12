@@ -44,9 +44,9 @@ interface TimelinePoint {
 }
 
 // -----------------------------
-// Sample Data (replace with real data)
+// Sample Data (fallback when no real data provided)
 // -----------------------------
-const PATIENT_DATA: PatientPoint[] = [
+const DEFAULT_PATIENT_DATA: PatientPoint[] = [
   { region: "head", x: 100, y: 50, severity: 3, symptoms: ["headache", "dizziness"], duration: "3 days" },
   { region: "chest", x: 100, y: 120, severity: 5, symptoms: ["chest pain", "shortness of breath"], duration: "1 week" },
   { region: "leftShoulder", x: 70, y: 100, severity: 2, symptoms: ["stiffness"], duration: "2 weeks" },
@@ -54,7 +54,7 @@ const PATIENT_DATA: PatientPoint[] = [
   { region: "abdomen", x: 100, y: 160, severity: 1, symptoms: ["mild discomfort"], duration: "1 day" },
 ];
 
-const PATIENT_INFO: PatientInfo = {
+const DEFAULT_PATIENT_INFO: PatientInfo = {
   name: "John Smith",
   age: 45,
   gender: "Male",
@@ -62,7 +62,7 @@ const PATIENT_INFO: PatientInfo = {
   chiefComplaint: "Chest pain and difficulty breathing",
 };
 
-const TIMELINE_DATA: TimelinePoint[] = [
+const DEFAULT_TIMELINE_DATA: TimelinePoint[] = [
   { day: "Day 1", severity: 2, symptoms: 1 },
   { day: "Day 2", severity: 3, symptoms: 2 },
   { day: "Day 3", severity: 4, symptoms: 3 },
@@ -180,10 +180,94 @@ const ensureReadyForSnapshot = async (root: HTMLElement) => {
 
 
 // -----------------------------
+// Component Props
+// -----------------------------
+interface PatientReportSystemProps {
+  patientData?: {
+    patientInfo?: {
+      name?: string;
+      age?: string;
+      gender?: string;
+    };
+    symptoms?: Array<{
+      type: string;
+      severity: number;
+      durationNumber?: number;
+      durationUnit?: string;
+    }>;
+  };
+  aiAnalysis?: {
+    potentialDiseases?: string[];
+    recommendations?: string[];
+    redFlags?: string[];
+  };
+}
+
+// -----------------------------
 // Component
 // -----------------------------
-const PatientReportSystem: React.FC = () => {
+const PatientReportSystem: React.FC<PatientReportSystemProps> = ({ 
+  patientData, 
+  aiAnalysis 
+}) => {
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+
+  // Convert patient data to visualization format or use defaults
+  const convertPatientData = () => {
+    if (!patientData) {
+      // Use default data if no patient data provided
+      return {
+        PATIENT_DATA: DEFAULT_PATIENT_DATA,
+        PATIENT_INFO: DEFAULT_PATIENT_INFO,
+        TIMELINE_DATA: DEFAULT_TIMELINE_DATA
+      };
+    }
+
+    // Convert your symptom data to visualization format
+    const symptoms = patientData.symptoms || [];
+    const convertedSymptoms = symptoms.map((symptom, index: number) => {
+      // Map symptom types to body regions (simplified mapping)
+      const regionMap: { [key: string]: { x: number; y: number; region: string } } = {
+        'headache': { x: 100, y: 50, region: 'head' },
+        'chest pain': { x: 100, y: 120, region: 'chest' },
+        'abdominal pain': { x: 100, y: 160, region: 'abdomen' },
+        'back pain': { x: 100, y: 200, region: 'back' },
+        'joint pain': { x: 110, y: 280, region: 'knee' },
+        'shoulder pain': { x: 70, y: 100, region: 'shoulder' },
+        'knee pain': { x: 110, y: 280, region: 'knee' },
+      };
+
+      const regionData = regionMap[symptom.type.toLowerCase()] || { x: 100 + index * 20, y: 150 + index * 20, region: 'other' };
+      
+      return {
+        region: regionData.region,
+        x: regionData.x,
+        y: regionData.y,
+        severity: Math.min(5, Math.max(1, Math.round(symptom.severity / 2))) as SeverityLevel,
+        symptoms: [symptom.type],
+        duration: `${symptom.durationNumber || 1} ${symptom.durationUnit || 'days'}`
+      };
+    });
+
+    return {
+      PATIENT_DATA: convertedSymptoms,
+      PATIENT_INFO: {
+        name: patientData.patientInfo?.name || "Unknown Patient",
+        age: parseInt(patientData.patientInfo?.age || "0") || 0,
+        gender: patientData.patientInfo?.gender || "Unknown",
+        date: new Date().toISOString().split('T')[0],
+        chiefComplaint: symptoms.map((s) => s.type).join(", ") || "No symptoms reported",
+      },
+      TIMELINE_DATA: [
+        { day: "Day 1", severity: 2, symptoms: 1 },
+        { day: "Day 2", severity: 3, symptoms: 2 },
+        { day: "Day 3", severity: 4, symptoms: 3 },
+        { day: "Today", severity: Math.round(symptoms.reduce((sum: number, s) => sum + s.severity, 0) / symptoms.length / 2) || 3, symptoms: symptoms.length },
+      ]
+    };
+  };
+
+  const { PATIENT_DATA, PATIENT_INFO, TIMELINE_DATA } = convertPatientData();
 
   const generatePDF = async () => {
     setIsGeneratingPDF(true);
@@ -557,6 +641,51 @@ const circlePositions = [
           ))}
         </div>
       </section>
+
+      {/* AI Analysis Display */}
+      {aiAnalysis && (
+        <section className="mt-6 rounded-lg bg-white p-6 shadow-md">
+          <h3 className="mb-4 text-xl font-semibold text-gray-900">AI Analysis</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {aiAnalysis.potentialDiseases && (
+              <div className="bg-red-50 p-4 rounded-lg">
+                <h4 className="font-semibold text-black mb-3">Potential Diagnoses</h4>
+                <div className="space-y-2">
+                  {aiAnalysis.potentialDiseases.map((disease: string, idx: number) => (
+                    <div key={idx} className="text-sm text-black bg-red-100 p-2 rounded border-l-4 border-red-400">
+                      {disease}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {aiAnalysis.recommendations && (
+              <div className="bg-green-50 p-4 rounded-lg">
+                <h4 className="font-semibold text-black mb-3">Recommendations</h4>
+                <div className="space-y-2">
+                  {aiAnalysis.recommendations.map((rec: string, idx: number) => (
+                    <div key={idx} className="text-sm text-black bg-green-100 p-2 rounded border-l-4 border-green-400">
+                      ✅ {rec}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {aiAnalysis.redFlags && (
+              <div className="bg-yellow-50 p-4 rounded-lg">
+                <h4 className="font-semibold text-black mb-3">Red Flags</h4>
+                <div className="space-y-2">
+                  {aiAnalysis.redFlags.map((flag: string, idx: number) => (
+                    <div key={idx} className="text-sm text-black bg-yellow-100 p-2 rounded border-l-4 border-yellow-400">
+                      ⚠️ {flag}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 };
