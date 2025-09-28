@@ -238,9 +238,64 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
       doc.text(`Date: ${PATIENT_INFO.date}`, 20, 62);
       doc.text(`Chief Complaint: ${PATIENT_INFO.chiefComplaint}`, 20, 69);
 
+      // Body Heatmap
+      const heatmapEl = document.getElementById("body-heatmap");
+      if (heatmapEl) {
+        const heatmapCanvas = await html2canvas(heatmapEl, {
+          backgroundColor: "#ffffff",
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          foreignObjectRendering: true,
+          scrollX: 0,
+          scrollY: -window.scrollY,
+          onclone: (clonedDoc) => safeOnClone(clonedDoc, "body-heatmap"),
+        });
+        const img = heatmapCanvas.toDataURL("image/png");
+        doc.setFontSize(12);
+        doc.setTextColor(40, 40, 40);
+        doc.setFont("helvetica", "bold");
+        doc.text("Body Pain Assessment", 20, 85);
+        doc.addImage(img, "PNG", 20, 90, 70, 100);
+      }
+
+      // Severity Chart
+      const severityEl = document.getElementById("severity-chart");
+      if (severityEl) {
+        const c = await html2canvas(severityEl, {
+          backgroundColor: "#ffffff",
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          foreignObjectRendering: true,
+          onclone: (clonedDoc) => safeOnClone(clonedDoc, "severity-chart"),
+        });
+        const img = c.toDataURL("image/png");
+        doc.setFontSize(12);
+        doc.text("Severity Analysis", 105, 85);
+        doc.addImage(img, "PNG", 105, 90, 85, 55);
+      }
+
+      // Timeline Chart
+      const timelineEl = document.getElementById("timeline-chart");
+      if (timelineEl) {
+        const c = await html2canvas(timelineEl, {
+          backgroundColor: "#ffffff",
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          foreignObjectRendering: true,
+          onclone: (clonedDoc) => safeOnClone(clonedDoc, "timeline-chart"),
+        });
+        const img = c.toDataURL("image/png");
+        doc.setFontSize(12);
+        doc.text("Symptom Progression", 105, 155);
+        doc.addImage(img, "PNG", 105, 160, 85, 45);
+      }
+
       // AI Analysis Section (if available)
       if (aiAnalysis) {
-        let y = 85;
+        let y = 215;
         doc.setFontSize(12);
         doc.setTextColor(40, 40, 40);
         doc.setFont("helvetica", "bold");
@@ -326,10 +381,15 @@ const PatientReportSystem: React.FC<PatientReportSystemProps> = ({
           <h2 className="mb-4 text-xl font-semibold text-gray-900">Body Pain Assessment</h2>
           <div id="body-heatmap" className="flex flex-col items-center gap-3 pb-4">
             <div className="relative w-full max-w-[260px] aspect-[1/2]">
-              {/* Placeholder for body image - you'll need to add /public/body-outline.jpg */}
-              <div className="w-full h-full bg-gray-200 rounded-md border flex items-center justify-center">
-                <span className="text-gray-500">Body Outline Image</span>
-              </div>
+              {/* Body outline image */}
+              <Image
+                src="/body-outline.jpg"
+                alt="Body Outline"
+                width={200}
+                height={400}
+                className="w-full h-full object-contain border rounded-md"
+                style={{ zIndex: 0 }}
+              />
               <svg
                 viewBox="0 0 200 400"
                 className="absolute inset-0 h-full w-full"

@@ -176,6 +176,8 @@ const PatientReportSystem: React.FC = () => {
           backgroundColor: "#ffffff",
           scale: 2,
           useCORS: true,
+          allowTaint: true,
+          foreignObjectRendering: true,
           scrollX: 0,
           scrollY: -window.scrollY, // prevent viewport cropping
           onclone: (clonedDoc) => safeOnClone(clonedDoc, "body-heatmap"),
@@ -195,6 +197,8 @@ const PatientReportSystem: React.FC = () => {
           backgroundColor: "#ffffff",
           scale: 2,
           useCORS: true,
+          allowTaint: true,
+          foreignObjectRendering: true,
           onclone: (clonedDoc) => safeOnClone(clonedDoc, "severity-chart"),
         });
         const img = c.toDataURL("image/png");
@@ -210,6 +214,8 @@ const PatientReportSystem: React.FC = () => {
           backgroundColor: "#ffffff",
           scale: 2,
           useCORS: true,
+          allowTaint: true,
+          foreignObjectRendering: true,
           onclone: (clonedDoc) => safeOnClone(clonedDoc, "timeline-chart"),
         });
         const img = c.toDataURL("image/png");

@@ -82,7 +82,10 @@ const PatientReportSystem = () => {
       if (heatmapElement) {
         const heatmapCanvas = await html2canvas(heatmapElement, { 
           backgroundColor: '#ffffff',
-          scale: 2 
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          foreignObjectRendering: true
         });
         const heatmapImage = heatmapCanvas.toDataURL('image/png');
         doc.addImage(heatmapImage, 'PNG', 20, 85, 80, 120);
@@ -93,7 +96,10 @@ const PatientReportSystem = () => {
       if (severityElement) {
         const severityCanvas = await html2canvas(severityElement, { 
           backgroundColor: '#ffffff',
-          scale: 2 
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          foreignObjectRendering: true
         });
         const severityImage = severityCanvas.toDataURL('image/png');
         doc.addImage(severityImage, 'PNG', 110, 85, 80, 60);
@@ -104,7 +110,10 @@ const PatientReportSystem = () => {
       if (timelineElement) {
         const timelineCanvas = await html2canvas(timelineElement, { 
           backgroundColor: '#ffffff',
-          scale: 2 
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          foreignObjectRendering: true
         });
         const timelineImage = timelineCanvas.toDataURL('image/png');
         doc.addImage(timelineImage, 'PNG', 110, 155, 80, 50);
