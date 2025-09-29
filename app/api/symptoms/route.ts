@@ -7,50 +7,71 @@ const openai = new OpenAI({
 
 export async function POST(request: NextRequest) {
   try {
-    const { currentSymptoms, patientInfo } = await request.json();
+    console.log('API route called');
+    const body = await request.json();
+    console.log('Request body:', body);
+    const { currentSymptoms, fullSymptoms, patientInfo, phq9Responses, summaryOnly, responses } = body;
     
     // Validate input data
     const validSymptoms = currentSymptoms?.filter((s: string) => s && s.trim() !== '') || [];
     const age = patientInfo?.age || 'unknown';
     const gender = patientInfo?.gender || 'unknown';
     
-    // Return demo data if no real API key or no valid symptoms
-    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'demo-key' || validSymptoms.length === 0) {
+    console.log('Valid symptoms:', validSymptoms);
+    console.log('Age:', age, 'Gender:', gender);
+    
+    // If caller requests only a narrative summary (no questions)
+    if (summaryOnly) {
+      const meds = responses?.medication_list || '';
+      const hasMeds = (responses?.medications || '').toLowerCase() === 'yes';
+      const hasAllergies = (responses?.allergies || '').toLowerCase() === 'yes';
+      const allergies = responses?.allergy_list || '';
+      const hadEpisodes = (responses?.previous_episodes || '').toLowerCase() === 'yes';
+      const prevTreatment = responses?.previous_treatment || '';
+      const mainConcern = responses?.main_concern || '';
+
+      const symptomParts = (fullSymptoms || validSymptoms).map((s: any) => {
+        if (typeof s === 'string') return s;
+        const unit = s.durationUnit || 'day(s)';
+        const count = s.durationNumber || 1;
+        const formattedUnit = unit.endsWith('(s)') 
+          ? (count === 1 ? unit.replace('(s)', '') : unit.replace('(s)', 's'))
+          : (count === 1 ? unit.replace(/s$/, '') : unit);
+        return `${s.type} (severity ${s.severity}/10, ${s.frequency}, ${count} ${formattedUnit})`;
+      }).join('; ');
+
+      const phqScore = phq9Responses ? Object.values(phq9Responses).reduce((sum: number, v: any) => sum + (typeof v === 'number' ? v : 0), 0) : 0;
+      const depressionSeverity = phqScore >= 15 ? 'severe' : phqScore >= 10 ? 'moderate' : phqScore >= 5 ? 'mild' : 'minimal';
+
+      const baseSummary = `Patient is experiencing: ${symptomParts}. ${hasMeds ? `Current medications include ${meds}. ` : ''}${hasAllergies ? `Allergies noted: ${allergies}. ` : ''}${hadEpisodes ? `History of similar episodes; prior treatment: ${prevTreatment}. ` : ''}${mainConcern ? `Primary concern: ${mainConcern}. ` : ''}${phqScore ? `PHQ-9 score ${phqScore}/27 (${depressionSeverity}).` : ''}`;
+
+      return NextResponse.json({ success: true, data: { patientSummary: baseSummary.trim() } });
+    }
+
+    // Debug: Check API key status
+    console.log('API Key exists:', !!process.env.OPENAI_API_KEY);
+    console.log('API Key is demo:', process.env.OPENAI_API_KEY === 'demo-key');
+    console.log('Valid symptoms length:', validSymptoms.length);
+    
+    // Return error if no valid symptoms
+    if (validSymptoms.length === 0) {
       return NextResponse.json({
-        success: true,
-        data: {
-          diagnosticQuestions: [
-            "When did these symptoms first begin? (acute onset vs gradual)",
-            "Describe the quality and character of your primary symptom",
-            "What makes your symptoms better or worse?",
-            "Have you experienced any recent trauma, illness, or changes in medications?",
-            "Do you have a family history of similar conditions?",
-            "Have you noticed any associated symptoms like fever, weight loss, or fatigue?",
-            "Are your symptoms interfering with daily activities or sleep?",
-            "Have you experienced any recent travel or environmental exposures?"
-          ],
-          potentialDiseases: [
-            "Tension headache (most common)",
-            "Migraine (if unilateral, throbbing)",
-            "Viral illness (if fever, body aches present)",
-            "Serious neurological condition (to rule out)"
-          ],
-          redFlags: [
-            "Sudden severe headache (thunderclap)",
-            "Headache with fever and neck stiffness",
-            "Headache after head trauma with worsening symptoms",
-            "Neurological deficits (weakness, speech problems, vision changes)"
-          ],
-          recommendations: [
-            "Seek immediate emergency care if red flags present",
-            "Schedule urgent evaluation if symptoms worsen",
-            "Try conservative measures: rest, hydration, over-the-counter pain relief",
-            "Follow up with primary care physician within 1-2 weeks"
-          ]
-        }
-      });
+        success: false,
+        error: 'No valid symptoms provided'
+      }, { status: 400 });
     }
     
+    // Define hardcoded questions to avoid duplicating
+    const hardcodedQuestions = [
+      'Are you currently taking any medications (including over-the-counter drugs, vitamins, or supplements)?',
+      'Please list all medications you are currently taking:',
+      'Do you have any known allergies to medications, foods, or environmental factors?',
+      'Please describe your allergies and reactions:',
+      'Have you experienced similar symptoms before?',
+      'What treatment did you receive previously and was it effective?',
+      'What is your main concern about these symptoms?'
+    ];
+
     // Create a sophisticated medical diagnostic prompt
     const prompt = `
     You are an expert medical AI diagnostician with advanced clinical reasoning capabilities. 
@@ -59,77 +80,125 @@ export async function POST(request: NextRequest) {
     Symptoms: ${validSymptoms.join(', ')}
     Demographics: Age ${age}, Gender ${gender}
     
-    CLINICAL ANALYSIS REQUIRED:
+    IMPORTANT: Do NOT generate questions about the following topics as they are already covered in the standard questionnaire:
+    - Current medications, supplements, or vitamins
+    - Allergies to medications, foods, or environmental factors
+    - Previous episodes of similar symptoms
+    - Previous treatments and their effectiveness
+    - Main concerns about symptoms
     
-    1. DIFFERENTIAL DIAGNOSIS METHODOLOGY:
-    - Apply systematic approach: chief complaint → symptom analysis → risk stratification
-    - Consider most common diagnoses first, then serious conditions that must not be missed
-    - Factor in age, gender, and symptom combinations
-    - Assess symptom severity, timing, and progression
-    
-    2. SYMPTOM PATTERN RECOGNITION:
-    Analyze for classic presentations of:
-    - Neurological: migraine, tension headache, cluster headache, stroke, seizure, meningitis, concussion
-    - Cardiovascular: myocardial infarction, arrhythmia, heart failure, aortic dissection
-    - Respiratory: pneumonia, asthma, COPD exacerbation, pulmonary embolism, pneumothorax
-    - Gastrointestinal: appendicitis, cholecystitis, pancreatitis, bowel obstruction, gastroenteritis
-    - Musculoskeletal: arthritis, fracture, muscle strain, fibromyalgia, autoimmune conditions
-    - Endocrine: diabetes complications, thyroid disorders, adrenal insufficiency
-    - Infectious: sepsis, UTI, respiratory infections, meningitis, encephalitis
-    
-    3. RISK STRATIFICATION:
-    - Identify red flags requiring immediate attention
-    - Assess urgency level (emergent, urgent, routine)
-    - Consider contraindications and complications
-    
-    4. CLINICAL REASONING:
-    Generate evidence-based diagnostic questions that will:
+    Generate specific, targeted diagnostic questions based on the patient's symptoms. For each symptom, create questions that will help:
     - Refine the differential diagnosis
     - Assess symptom characteristics (onset, duration, severity, triggers, relieving factors)
     - Evaluate associated symptoms and constitutional symptoms
     - Gather relevant medical history and risk factors
     - Identify red flags and warning signs
     
-    Return structured clinical assessment:
+    Focus on symptom-specific questions that are NOT already covered in the standard intake form.
+    
+    Please provide your response in valid JSON format as a structured clinical assessment:
     {
       "diagnosticQuestions": [
-        "When did these symptoms first begin? (acute onset vs gradual)",
-        "Describe the quality and character of your primary symptom",
-        "What makes your symptoms better or worse?",
-        "Have you experienced any recent trauma, illness, or changes in medications?",
-        "Do you have a family history of similar conditions?",
-        "Have you noticed any associated symptoms like fever, weight loss, or fatigue?",
-        "Are your symptoms interfering with daily activities or sleep?",
-        "Have you experienced any recent travel or environmental exposures?"
+        {
+          "text": "Question text here",
+          "type": "text|yesno|select|multiselect",
+          "options": ["option1", "option2"]
+        }
       ],
       "potentialDiseases": [
-        "Primary diagnosis (most likely)",
-        "Secondary diagnosis (alternative)",
-        "Tertiary diagnosis (less common but possible)",
-        "Serious condition to rule out"
+        "Specific diagnosis 1",
+        "Specific diagnosis 2",
+        "Specific diagnosis 3"
       ],
       "redFlags": [
-        "Symptoms requiring immediate medical attention",
-        "Warning signs of serious pathology",
-        "Indicators of medical emergency"
+        "Specific red flag 1",
+        "Specific red flag 2"
       ],
       "recommendations": [
-        "Immediate actions if red flags present",
-        "When to seek urgent vs routine care",
-        "Self-care measures if appropriate",
-        "Follow-up recommendations"
-      ]
+        "Specific recommendation 1",
+        "Specific recommendation 2"
+      ],
+      "patientSummary": "A single concise paragraph summarizing the patient's presentation and key findings."
     }
     `;
 
+    // Check if API key is valid
+    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'demo-key') {
+      throw new Error('OpenAI API key is missing or invalid');
+    }
+
+    console.log('Making OpenAI API call with prompt length:', prompt.length);
+    
     const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       response_format: { type: "json_object" }
     });
 
-    const result = JSON.parse(completion.choices[0].message.content || '{}');
+    console.log('OpenAI API response received');
+    
+    let result;
+    try {
+      const content = completion.choices[0].message.content || '{}';
+      console.log('Raw OpenAI response:', content);
+      result = JSON.parse(content);
+      console.log('Parsed result:', result);
+      
+      // Filter out any duplicate questions that might have slipped through
+      if (result.diagnosticQuestions && Array.isArray(result.diagnosticQuestions)) {
+        const normalizeQuestion = (text: string): string => {
+          return text
+            .toLowerCase()
+            .replace(/[^\w\s]/g, '') // Remove punctuation
+            .replace(/\s+/g, ' ') // Normalize whitespace
+            .trim();
+        };
+        
+        const hardcodedSet = new Set(hardcodedQuestions.map(normalizeQuestion));
+        const keyPhrases = [
+          'medications', 'medication', 'supplements', 'vitamins', 'drugs',
+          'allergies', 'allergic', 'allergy',
+          'previous episodes', 'experienced before', 'similar symptoms',
+          'treatment', 'effective',
+          'main concern', 'concern about'
+        ];
+        
+        const originalCount = result.diagnosticQuestions.length;
+        result.diagnosticQuestions = result.diagnosticQuestions.filter((question: any) => {
+          const questionText = typeof question === 'string' ? question : question.text;
+          const normalized = normalizeQuestion(questionText);
+          
+          // Check for direct match
+          if (hardcodedSet.has(normalized)) {
+            console.log(`API: Filtered out duplicate question: "${questionText}"`);
+            return false;
+          }
+          
+          // Check for semantic similarity
+          const isSemanticDuplicate = keyPhrases.some(phrase => {
+            const phraseNormalized = normalizeQuestion(phrase);
+            return normalized.includes(phraseNormalized) || phraseNormalized.includes(normalized);
+          });
+          
+          if (isSemanticDuplicate) {
+            console.log(`API: Filtered out semantically similar question: "${questionText}"`);
+            return false;
+          }
+          
+          return true;
+        });
+        
+        const filteredCount = originalCount - result.diagnosticQuestions.length;
+        if (filteredCount > 0) {
+          console.log(`API: Filtered out ${filteredCount} duplicate questions from AI response`);
+        }
+      }
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError);
+      console.error('Raw content that failed to parse:', completion.choices[0].message.content);
+      throw new Error(`Failed to parse OpenAI response: ${parseError instanceof Error ? parseError.message : 'Unknown parse error'}`);
+    }
     
     return NextResponse.json({
       success: true,
@@ -138,8 +207,17 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('OpenAI API error:', error);
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      apiKey: process.env.OPENAI_API_KEY ? 'Present' : 'Missing'
+    });
+    
     return NextResponse.json(
-      { error: 'Failed to generate symptom suggestions' },
+      { 
+        error: 'Failed to generate symptom suggestions',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     );
   }

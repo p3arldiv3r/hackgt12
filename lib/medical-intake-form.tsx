@@ -20,11 +20,9 @@ type PatientData = {
     insurance: string; medicalId: string;
   };
   symptoms: Symptom[];
-  healthMetrics: {
-    sleep: { quality: number; hoursPerNight: number };
-    mood: { overall: number; stress: number };
-    energy: { level: number; fatigueFrequency: string };
-    appetite: { level: number; changes: string };
+  phq9: {
+    responses: { [key: string]: number }; // q1..q9 = 0..3
+    difficulty?: number; // 0..3
   };
   responses: { [key: string]: string };
 };
@@ -260,12 +258,7 @@ export default function MedicalIntakeForm() {
       insurance: '', medicalId: ''
     },
     symptoms: [{ type: '', severity: 1, description: '', frequency: 'intermittent', duration: 'days', durationNumber: 1, durationUnit: 'day(s)' }],
-    healthMetrics: {
-      sleep: { quality: 5, hoursPerNight: 7 },
-      mood: { overall: 5, stress: 5 },
-      energy: { level: 5, fatigueFrequency: 'sometimes' },
-      appetite: { level: 5, changes: 'no_change' }
-    },
+    phq9: { responses: {} },
     responses: {}
   });
 
@@ -275,6 +268,114 @@ export default function MedicalIntakeForm() {
   const [aiGeneratedQuestions, setAiGeneratedQuestions] = useState<Question[]>([]);
   const [aiAnalysisData, setAiAnalysisData] = useState<any>(null);
   const [finalAnalysis, setFinalAnalysis] = useState<any>(null);
+  const [todayDate, setTodayDate] = useState<string>('');
+  const [openSuggestionsIndex, setOpenSuggestionsIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    // Set once on client to avoid SSR/client mismatch
+    setTodayDate(new Date().toISOString().split('T')[0]);
+  }, []);
+
+  // Auto-generate summary when reaching final page
+  useEffect(() => {
+    if (currentPage === 5 && !finalAnalysis?.patientSummary) {
+      const generateSummary = async () => {
+        try {
+          const currentSymptoms = patientData.symptoms.filter(s => s.type && s.type !== '');
+          const summaryRes = await fetch('/api/symptoms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              summaryOnly: true,
+              fullSymptoms: currentSymptoms.map(s => ({
+                type: s.type,
+                severity: s.severity,
+                frequency: s.frequency,
+                durationNumber: s.durationNumber || 1,
+                durationUnit: s.durationUnit || 'day(s)'
+              })),
+              patientInfo: {
+                age: calculateAge(patientData.patientInfo.dateOfBirth),
+                gender: patientData.patientInfo.gender
+              },
+              phq9Responses: patientData.phq9?.responses && patientData.phq9?.difficulty !== undefined
+                ? { ...patientData.phq9.responses, difficulty: patientData.phq9.difficulty }
+                : patientData.phq9?.responses || {},
+              responses: patientData.responses
+            })
+          });
+          if (summaryRes.ok) {
+            const payload = await summaryRes.json();
+            if (payload?.data?.patientSummary) {
+              setFinalAnalysis({ patientSummary: payload.data.patientSummary });
+            }
+          }
+        } catch (error) {
+          console.error('Failed to generate summary:', error);
+        }
+      };
+      
+      generateSummary();
+    }
+  }, [currentPage, patientData, finalAnalysis]);
+
+  const getSeverityCategory = (value: number): 'Low' | 'Moderate' | 'Severe' => {
+    if (value <= 3) return 'Low';
+    if (value <= 6) return 'Moderate';
+    return 'Severe';
+  };
+
+  const formatUnit = (rawUnit: string | undefined, count: number): string => {
+    const unit = (rawUnit || 'day(s)');
+    if (unit.endsWith('(s)')) {
+      const base = unit.replace('(s)', '');
+      return count === 1 ? base : `${base}s`;
+    }
+    // Fallback: naive pluralization
+    return count === 1 ? unit.replace(/s$/, '') : unit;
+  };
+
+  // Basic fuzzy matching for symptom search
+  const levenshtein = (a: string, b: string): number => {
+    const m = a.length; const n = b.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        dp[i][j] = Math.min(
+          dp[i - 1][j] + 1,
+          dp[i][j - 1] + 1,
+          dp[i - 1][j - 1] + cost
+        );
+      }
+    }
+    return dp[m][n];
+  };
+
+  const getFuzzySuggestions = (query: string, options: string[], limit = 12): string[] => {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      return [...options]
+        .map(opt => opt.replace(/_/g, ' '))
+        .sort((a, b) => a.localeCompare(b))
+        .slice(0, limit);
+    }
+    const scored = options.map(opt => {
+      const pretty = opt.replace(/_/g, ' ');
+      const lower = pretty.toLowerCase();
+      let score = 1000;
+      if (lower.startsWith(q)) score = 0;
+      else if (lower.includes(q)) score = 2;
+      else score = Math.min(5 + levenshtein(lower, q), 999);
+      return { pretty, key: opt, score };
+    });
+    return scored
+      .sort((a, b) => a.score - b.score || a.pretty.localeCompare(b.pretty))
+      .slice(0, limit)
+      .map(s => s.pretty);
+  };
 
   // REAL OpenAI API call - this will charge your account
   const callOpenAI = async (patientContext: any): Promise<Question[]> => {
@@ -289,6 +390,12 @@ export default function MedicalIntakeForm() {
         gender: patientContext.demographics.gender || ''
       };
 
+      console.log('Sending symptoms to API:', currentSymptoms);
+      
+      // Add timeout to prevent hanging
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
       const response = await fetch('/api/symptoms', {
         method: 'POST',
         headers: {
@@ -296,15 +403,22 @@ export default function MedicalIntakeForm() {
         },
         body: JSON.stringify({
           currentSymptoms,
-          patientInfo
-        })
+          patientInfo,
+          phq9Responses: patientContext.phq9?.responses && patientContext.phq9?.difficulty !== undefined
+            ? { ...patientContext.phq9.responses, difficulty: patientContext.phq9.difficulty }
+            : patientContext.phq9?.responses || {}
+        }),
+        signal: controller.signal
       });
 
+      clearTimeout(timeoutId);
+
       if (!response.ok) {
-        throw new Error(`OpenAI API error: ${response.status}`);
+        throw new Error(`API error: ${response.status}`);
       }
 
       const data = await response.json();
+      console.log('API Response:', data);
       
       // Store the full AI analysis data
       if (data.success && data.data) {
@@ -312,25 +426,116 @@ export default function MedicalIntakeForm() {
         
         // Convert the diagnostic questions to question format
         if (data.data.diagnosticQuestions) {
-          return data.data.diagnosticQuestions.map((question: string, index: number) => ({
-            id: `ai_question_${index}`,
-            text: question.endsWith('?') ? question : question + '?',
-            type: 'yesno' as const,
-            required: true
-          }));
+          console.log('Using AI-generated questions:', data.data.diagnosticQuestions);
+          
+          // Create the deduplication rule set
+          const { filterDuplicateQuestions } = createQuestionDeduplicationRuleSet();
+          
+          // Convert AI questions to our format
+          const rawAiQuestions = data.data.diagnosticQuestions.map((question: any, index: number) => {
+            // Handle both old string format and new object format
+            if (typeof question === 'string') {
+              return {
+                id: `ai_question_${index}`,
+                text: question.endsWith('?') ? question : question + '?',
+                type: 'text' as const,
+                required: true
+              };
+            } else {
+              return {
+                id: `ai_question_${index}`,
+                text: question.text.endsWith('?') ? question.text : question.text + '?',
+                type: question.type || 'text',
+                options: question.options,
+                required: true
+              };
+            }
+          });
+          
+          // Filter out duplicate questions
+          const filteredQuestions = filterDuplicateQuestions(rawAiQuestions);
+          console.log(`Filtered ${rawAiQuestions.length - filteredQuestions.length} duplicate questions from AI response`);
+          
+          return filteredQuestions;
         }
       }
       
+      console.log('No AI questions found, using fallback');
       return generateFallbackQuestions(patientContext);
 
     } catch (error) {
-      console.error('OpenAI API call failed:', error);
+      console.error('API call failed:', error);
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Request timed out, using fallback questions');
+      } else {
+        console.log('Using fallback questions due to error');
+      }
       return generateFallbackQuestions(patientContext);
     }
   };
 
-  // Fallback questions if OpenAI fails
+  // Rule set to prevent AI questions from duplicating hardcoded questions
+const createQuestionDeduplicationRuleSet = () => {
+  // Extract all hardcoded question texts and normalize them for comparison
+  const hardcodedQuestions = [
+    ...defaultQuestions.map(q => q.text),
+    ...Object.values(symptomQuestions).flat().map(q => q.text)
+  ];
+
+  // Normalize question text for comparison (remove punctuation, lowercase, trim)
+  const normalizeQuestion = (text: string): string => {
+    return text
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '') // Remove punctuation
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim();
+  };
+
+  // Create a set of normalized hardcoded questions for fast lookup
+  const hardcodedSet = new Set(hardcodedQuestions.map(normalizeQuestion));
+
+  // Check if an AI-generated question duplicates a hardcoded one
+  const isDuplicate = (aiQuestionText: string): boolean => {
+    const normalized = normalizeQuestion(aiQuestionText);
+    
+    // Direct match
+    if (hardcodedSet.has(normalized)) {
+      return true;
+    }
+
+    // Check for semantic similarity (key phrases)
+    const keyPhrases = [
+      'medications', 'medication', 'supplements', 'vitamins', 'drugs',
+      'allergies', 'allergic', 'allergy',
+      'previous episodes', 'experienced before', 'similar symptoms',
+      'treatment', 'effective',
+      'main concern', 'concern about'
+    ];
+
+    const aiNormalized = normalized;
+    return keyPhrases.some(phrase => {
+      const phraseNormalized = normalizeQuestion(phrase);
+      return aiNormalized.includes(phraseNormalized) || phraseNormalized.includes(aiNormalized);
+    });
+  };
+
+  // Filter out duplicate questions from AI-generated list
+  const filterDuplicateQuestions = (aiQuestions: Question[]): Question[] => {
+    return aiQuestions.filter(question => {
+      const isDup = isDuplicate(question.text);
+      if (isDup) {
+        console.log(`Filtered out duplicate AI question: "${question.text}"`);
+      }
+      return !isDup;
+    });
+  };
+
+  return { isDuplicate, filterDuplicateQuestions };
+};
+
+// Fallback questions if OpenAI fails
   const generateFallbackQuestions = (context: any): Question[] => {
+    console.log('Generating fallback questions');
     const fallback: Question[] = [
       {
         id: 'symptom_timing',
@@ -388,9 +593,26 @@ export default function MedicalIntakeForm() {
 
   // Generate questions based on current data
   const generateAIQuestions = async () => {
+    console.log('generateAIQuestions called');
+    return generateAIQuestionsWithSymptoms(patientData.symptoms);
+  };
+
+  // Generate questions with specific symptoms array
+  const generateAIQuestionsWithSymptoms = async (symptoms: Symptom[]) => {
+    console.log('generateAIQuestionsWithSymptoms called');
     setIsGeneratingQuestions(true);
     
-    const currentSymptoms = patientData.symptoms.filter(s => s.type && s.type !== '');
+    const currentSymptoms = symptoms.filter(s => s.type && s.type !== '');
+    console.log('Current symptoms for AI:', currentSymptoms);
+    
+    // If no symptoms, use fallback questions
+    if (currentSymptoms.length === 0) {
+      console.log('No symptoms found, using fallback');
+      setAiGeneratedQuestions(generateFallbackQuestions({}));
+      setIsGeneratingQuestions(false);
+      return;
+    }
+    
     const patternAnalysis = checkMedicalPatterns(currentSymptoms);
     
     const patientContext = {
@@ -406,13 +628,12 @@ export default function MedicalIntakeForm() {
         duration: s.duration,
         description: s.description
       })),
-      healthMetrics: patientData.healthMetrics,
+      phq9: patientData.phq9,
       responses: patientData.responses,
       riskFactors: {
-        highSeveritySymptoms: patientData.symptoms.some(s => s.severity >= 8),
+        highSeveritySymptoms: symptoms.some(s => s.severity >= 8),
         multipleSymptoms: currentSymptoms.length > 1,
-        poorSleep: patientData.healthMetrics.sleep.quality <= 4,
-        highStress: patientData.healthMetrics.mood.stress >= 7
+        depressionRisk: Object.values(patientData.phq9.responses).reduce((sum, val) => sum + (val || 0), 0) >= 10
       },
       affectedSystems: patternAnalysis.affectedSystems
     };
@@ -420,6 +641,47 @@ export default function MedicalIntakeForm() {
     try {
       const questions = await callOpenAI(patientContext);
       setAiGeneratedQuestions(questions);
+
+      // Generate overall patient summary paragraph
+      try {
+        const summaryController = new AbortController();
+        const summaryTimeoutId = setTimeout(() => summaryController.abort(), 15000); // 15 second timeout for summary
+        
+        const summaryRes = await fetch('/api/symptoms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            summaryOnly: true,
+            fullSymptoms: currentSymptoms.map(s => ({
+              type: s.type,
+              severity: s.severity,
+              frequency: s.frequency,
+              durationNumber: s.durationNumber || 1,
+              durationUnit: s.durationUnit || 'day(s)'
+            })),
+            patientInfo: {
+              age: calculateAge(patientData.patientInfo.dateOfBirth),
+              gender: patientData.patientInfo.gender
+            },
+            phq9Responses: patientContext.phq9?.responses && patientContext.phq9?.difficulty !== undefined
+              ? { ...patientContext.phq9.responses, difficulty: patientContext.phq9.difficulty }
+              : patientContext.phq9?.responses || {},
+            responses: patientData.responses
+          }),
+          signal: summaryController.signal
+        });
+        
+        clearTimeout(summaryTimeoutId);
+        
+        if (summaryRes.ok) {
+          const payload = await summaryRes.json();
+          if (payload?.data?.patientSummary) {
+            setFinalAnalysis({ patientSummary: payload.data.patientSummary });
+          }
+        }
+      } catch (summaryError) {
+        console.log('Summary generation failed, will retry later:', summaryError);
+      }
     } catch (error) {
       console.error('Failed to generate AI questions:', error);
       setAiGeneratedQuestions(generateFallbackQuestions(patientContext));
@@ -432,13 +694,19 @@ export default function MedicalIntakeForm() {
   const getCurrentPageQuestions = () => {
     if (currentPage === 0) return []; // Demographics page
     if (currentPage === 1) return []; // Symptoms page
-    if (currentPage === 2) return []; // Health metrics page
+    if (currentPage === 2) return []; // PHQ-9 page
     if (currentPage === 3) return defaultQuestions; // Default questions
     if (currentPage === 4) {
-      // Symptom-specific questions
+      // Symptom-specific questions - ensure AI questions are generated
       const symptomTypes = patientData.symptoms
         .filter(s => s.type && s.type !== '')
         .map(s => s.type);
+      
+      // If we have symptoms but no AI questions, generate them
+      if (symptomTypes.length > 0 && aiGeneratedQuestions.length === 0 && !isGeneratingQuestions) {
+        console.log('Triggering AI question generation from page 4');
+        generateAIQuestions();
+      }
       
       let questions: Question[] = [];
       symptomTypes.forEach(symptom => {
@@ -446,6 +714,9 @@ export default function MedicalIntakeForm() {
           questions = [...questions, ...symptomQuestions[symptom]];
         }
       });
+      
+      // Add AI-generated questions
+      questions = [...questions, ...aiGeneratedQuestions];
       return questions;
     }
     if (currentPage === 5) return []; // Results page
@@ -468,14 +739,18 @@ export default function MedicalIntakeForm() {
     updated[idx] = { ...updated[idx], [field]: value };
     setPatientData({ ...patientData, symptoms: updated });
     
-    // Generate AI questions when symptom type is changed
-    if (field === 'type' && value && value !== '') {
-      setTimeout(() => {
-        const hasSymptoms = patientData.symptoms.some(s => s.type && s.type !== '');
-        if (hasSymptoms && aiGeneratedQuestions.length === 0) {
-          generateAIQuestions();
-        }
-      }, 500);
+    // Reset AI questions when symptoms change to force regeneration
+    if (field === 'type') {
+      setAiGeneratedQuestions([]);
+      if (value && value !== '') {
+        // Generate questions immediately for new symptom types with updated symptoms
+        setTimeout(() => {
+          const currentSymptoms = updated.filter(s => s.type && s.type !== '');
+          if (currentSymptoms.length > 0) {
+            generateAIQuestionsWithSymptoms(updated);
+          }
+        }, 100);
+      }
     }
   };
 
@@ -487,19 +762,16 @@ export default function MedicalIntakeForm() {
       }]
     });
     
-    // Generate AI questions when symptoms are added
-    setTimeout(() => {
-      const hasSymptoms = patientData.symptoms.some(s => s.type && s.type !== '');
-      if (hasSymptoms && aiGeneratedQuestions.length === 0) {
-        generateAIQuestions();
-      }
-    }, 500);
+    // Reset AI questions when adding new symptoms
+    setAiGeneratedQuestions([]);
   };
 
   const removeSymptom = (idx: number) => {
     if (patientData.symptoms.length > 1) {
       const updated = patientData.symptoms.filter((_, i) => i !== idx);
       setPatientData({ ...patientData, symptoms: updated });
+      // Reset AI questions when symptoms are removed
+      setAiGeneratedQuestions([]);
     }
   };
 
@@ -536,7 +808,22 @@ export default function MedicalIntakeForm() {
     if (currentPage === 1) {
       const hasValidSymptoms = patientData.symptoms.some(s => s.type && s.type !== '');
       if (!hasValidSymptoms) {
-        alert('Please enter at least one symptom before proceeding.');
+        alert('Please select at least one symptom before proceeding.');
+        return;
+      }
+    }
+    
+    // Validate PHQ-9 page
+    if (currentPage === 2) {
+      const responses = patientData.phq9?.responses || {};
+      const allAnswered = Array.from({ length: 9 }).every((_, i) => typeof responses[`q${i + 1}`] === 'number');
+      if (!allAnswered) {
+        alert('Please answer all PHQ-9 questions before proceeding.');
+        return;
+      }
+      const anyPositive = Object.values(responses).some(v => (typeof v === 'number' ? v : 0) > 0);
+      if (anyPositive && typeof patientData.phq9?.difficulty !== 'number') {
+        alert('Please indicate how difficult these problems have made things for you.');
         return;
       }
     }
@@ -641,7 +928,7 @@ export default function MedicalIntakeForm() {
             <div className="bg-blue-600 p-3 rounded-full mr-4">
               ❤️
             </div>
-            <h1 className="text-3xl font-bold text-gray-900">AI-Powered Medical Intake</h1>
+            <h1 className="text-3xl font-bold text-gray-900">QMedica</h1>
           </div>
           <p className="text-gray-600">
             Comprehensive assessment with real-time OpenAI question generation
@@ -683,6 +970,7 @@ export default function MedicalIntakeForm() {
                 value={patientData.patientInfo.dateOfBirth}
                 onChange={handlePatientInfoChange}
                 className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
+                max={todayDate}
                 required
               />
               <select
@@ -722,7 +1010,7 @@ export default function MedicalIntakeForm() {
             {patientData.symptoms.map((symptom, idx) => (
               <div key={idx} className="border border-gray-200 rounded-lg p-6 mb-4">
                 <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">Symptom {idx + 1}</h3>
+                  <h3 className="text-lg font-semibold text-black">Symptom {idx + 1}</h3>
                   {patientData.symptoms.length > 1 && (
                     <button
                       onClick={() => removeSymptom(idx)}
@@ -734,19 +1022,42 @@ export default function MedicalIntakeForm() {
         </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <select
-              value={symptom.type}
-              onChange={e => handleSymptomChange(idx, "type", e.target.value)}
-                    className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
+            <div className="relative">
+              <input
+                type="text"
+                value={symptom.type ? symptom.type.replace(/_/g, ' ') : ''}
+                onFocus={() => setOpenSuggestionsIndex(idx)}
+                onChange={e => {
+                  const pretty = e.target.value;
+                  const normalized = pretty.trim().toLowerCase().replace(/\s+/g, '_');
+                  handleSymptomChange(idx, "type", normalized);
+                  setOpenSuggestionsIndex(idx);
+                }}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-black"
+                placeholder="Search and select symptom"
               required
-            >
-                    <option value="">Select symptom</option>
-                    {baseSymptomTypes.map(type => (
-                      <option key={type} value={type}>
-                        {type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' ')}
-                      </option>
-              ))}
-            </select>
+              />
+              {openSuggestionsIndex === idx && (
+                <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-gray-300 rounded-lg shadow">
+                  {getFuzzySuggestions((symptom.type || '').replace(/_/g, ' '), [...baseSymptomTypes], 100).map(optionPretty => (
+                    <button
+                      key={optionPretty}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        const normalized = optionPretty.trim().toLowerCase().replace(/\s+/g, '_');
+                        handleSymptomChange(idx, "type", normalized);
+                        setOpenSuggestionsIndex(null);
+                      }}
+                      className="w-full text-left px-3 py-2 hover:bg-gray-100 text-black"
+                    >
+                      {optionPretty}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
                   
                   <select
                     value={symptom.frequency}
@@ -783,7 +1094,7 @@ export default function MedicalIntakeForm() {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Severity: {symptom.severity}/10
+                      Severity: {symptom.severity}/10 ({getSeverityCategory(symptom.severity)})
                     </label>
                     <input
                       type="range"
@@ -821,162 +1132,92 @@ export default function MedicalIntakeForm() {
 
         {currentPage === 2 && (
           <div className="bg-white rounded-xl shadow-lg p-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-6">Health Metrics</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="bg-blue-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-blue-900 mb-4">Sleep</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black">
-                      Quality: {patientData.healthMetrics.sleep.quality}/10
-                    </label>
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">PHQ-9 Depression Screening</h2>
+            <p className="text-gray-600 mb-6">
+              Over the last 2 weeks, how often have you been bothered by any of the following problems?
+            </p>
+            
+            <div className="space-y-6">
+              {[
+                "Little interest or pleasure in doing things",
+                "Feeling down, depressed, or hopeless", 
+                "Trouble falling or staying asleep, or sleeping too much",
+                "Feeling tired or having little energy",
+                "Poor appetite or overeating",
+                "Feeling bad about yourself — or that you are a failure or have let yourself or your family down",
+                "Trouble concentrating on things, such as reading the newspaper or watching television",
+                "Moving or speaking so slowly that other people could have noticed? Or the opposite — being so fidgety or restless that you have been moving around a lot more than usual",
+                "Thoughts that you would be better off dead or of hurting yourself in some way"
+              ].map((question, index) => (
+                <div key={index} className="border border-gray-200 rounded-lg p-4">
+                  <p className="text-sm font-medium text-gray-900 mb-3">
+                    {index + 1}. {question}
+                  </p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { label: "Not at all", value: 0 },
+                      { label: "Several days", value: 1 },
+                      { label: "More than half the days", value: 2 },
+                      { label: "Nearly every day", value: 3 }
+                    ].map((option) => (
+                      <label key={option.value} className="flex items-center space-x-2 cursor-pointer">
                     <input
-                      type="range"
-                      min={1}
-                      max={10}
-                      value={patientData.healthMetrics.sleep.quality}
-                      onChange={e => setPatientData({
+                          type="radio"
+                          name={`phq9_${index}`}
+                          value={option.value}
+                          checked={patientData.phq9.responses[`q${index + 1}`] === option.value}
+                          onChange={(e) => setPatientData({
                         ...patientData,
-                        healthMetrics: {
-                          ...patientData.healthMetrics,
-                          sleep: { ...patientData.healthMetrics.sleep, quality: Number(e.target.value) }
-                        }
-                      })}
-                      className="w-full h-2 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-lg appearance-none cursor-pointer"
-                      style={{
-                        background: `linear-gradient(to right, #EF4444 0%, #F59E0B 50%, #10B981 100%)`
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black">
-                      Hours per night:
+                            phq9: {
+                              ...patientData.phq9,
+                              responses: {
+                                ...patientData.phq9.responses,
+                                [`q${index + 1}`]: Number(e.target.value)
+                              }
+                            }
+                          })}
+                          className="h-4 w-4 text-blue-600"
+                        />
+                        <span className="text-xs text-gray-700">{option.label}</span>
                     </label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={24}
-                      step={0.5}
-                      value={patientData.healthMetrics.sleep.hoursPerNight}
-                      onChange={e => setPatientData({
-                        ...patientData,
-                        healthMetrics: {
-                          ...patientData.healthMetrics,
-                          sleep: { ...patientData.healthMetrics.sleep, hoursPerNight: Number(e.target.value) }
-                        }
-                      })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-black focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="Hours per night"
-                    />
+                    ))}
                   </div>
                 </div>
-              </div>
+              ))}
               
-              <div className="bg-purple-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-purple-900 mb-4">Mood</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black">
-                      Overall: {patientData.healthMetrics.mood.overall}/10
-                    </label>
+              {Object.values(patientData.phq9.responses).some(val => val > 0) && (
+                <div className="border border-gray-200 rounded-lg p-4 bg-blue-50">
+                  <p className="text-sm font-medium text-gray-900 mb-3">
+                    If you checked off any problems, how difficult have these problems made it for you to do your work, take care of things at home, or get along with other people?
+                  </p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { label: "Not difficult at all", value: 0 },
+                      { label: "Somewhat difficult", value: 1 },
+                      { label: "Very difficult", value: 2 },
+                      { label: "Extremely difficult", value: 3 }
+                    ].map((option) => (
+                      <label key={option.value} className="flex items-center space-x-2 cursor-pointer">
                     <input
-                      type="range"
-                      min={1}
-                      max={10}
-                      value={patientData.healthMetrics.mood.overall}
-                      onChange={e => setPatientData({
+                          type="radio"
+                          name="phq9_difficulty"
+                          value={option.value}
+                          checked={patientData.phq9.difficulty === option.value}
+                          onChange={(e) => setPatientData({
                         ...patientData,
-                        healthMetrics: {
-                          ...patientData.healthMetrics,
-                          mood: { ...patientData.healthMetrics.mood, overall: Number(e.target.value) }
-                        }
-                      })}
-                      className="w-full h-2 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-lg appearance-none cursor-pointer"
-                      style={{
-                        background: `linear-gradient(to right, #EF4444 0%, #F59E0B 50%, #10B981 100%)`
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black">
-                      Stress Level: {patientData.healthMetrics.mood.stress}/10
-                    </label>
-                    <input
-                      type="range"
-                      min={1}
-                      max={10}
-                      value={patientData.healthMetrics.mood.stress}
-                      onChange={e => setPatientData({
-                        ...patientData,
-                        healthMetrics: {
-                          ...patientData.healthMetrics,
-                          mood: { ...patientData.healthMetrics.mood, stress: Number(e.target.value) }
-                        }
-                      })}
-                      className="w-full h-2 bg-gradient-to-r from-green-500 via-yellow-500 to-red-500 rounded-lg appearance-none cursor-pointer"
-                      style={{
-                        background: `linear-gradient(to right, #10B981 0%, #F59E0B 50%, #EF4444 100%)`
-                      }}
-                    />
+                            phq9: {
+                              ...patientData.phq9,
+                              difficulty: Number(e.target.value)
+                            }
+                          })}
+                          className="h-4 w-4 text-blue-600"
+                        />
+                        <span className="text-xs text-gray-700">{option.label}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
-              </div>
-              
-              <div className="bg-green-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-green-900 mb-4">Energy</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black">
-                      Energy Level: {patientData.healthMetrics.energy.level}/10
-                    </label>
-                    <input
-                      type="range"
-                      min={1}
-                      max={10}
-                      value={patientData.healthMetrics.energy.level}
-                      onChange={e => setPatientData({
-                        ...patientData,
-                        healthMetrics: {
-                          ...patientData.healthMetrics,
-                          energy: { ...patientData.healthMetrics.energy, level: Number(e.target.value) }
-                        }
-                      })}
-                      className="w-full h-2 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-lg appearance-none cursor-pointer"
-                      style={{
-                        background: `linear-gradient(to right, #EF4444 0%, #F59E0B 50%, #10B981 100%)`
-                      }}
-                    />
-                  </div>
-                </div>
-      </div>
-
-              <div className="bg-orange-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-orange-900 mb-4">Appetite</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black">
-                      Appetite Level: {patientData.healthMetrics.appetite.level}/10
-                    </label>
-                    <input
-                      type="range"
-                      min={1}
-                      max={10}
-                      value={patientData.healthMetrics.appetite.level}
-                      onChange={e => setPatientData({
-                        ...patientData,
-                        healthMetrics: {
-                          ...patientData.healthMetrics,
-                          appetite: { ...patientData.healthMetrics.appetite, level: Number(e.target.value) }
-                        }
-                      })}
-                      className="w-full h-2 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-lg appearance-none cursor-pointer"
-                      style={{
-                        background: `linear-gradient(to right, #EF4444 0%, #F59E0B 50%, #10B981 100%)`
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
           </div>
         )}
@@ -989,7 +1230,32 @@ export default function MedicalIntakeForm() {
             
             {pageQuestions.length > 0 ? (
               <div>
-                {pageQuestions.map(question => renderQuestion(question))}
+                {(() => {
+                  // Build follow-up visibility rules from questions that define followUp
+                  const followUpMap: { [childId: string]: { parentId: string; answers: string[] } } = {};
+                  pageQuestions.forEach(parentQ => {
+                    if (parentQ.followUp) {
+                      Object.entries(parentQ.followUp).forEach(([answer, childIds]) => {
+                        childIds.forEach(childId => {
+                          followUpMap[childId] = followUpMap[childId]
+                            ? { parentId: followUpMap[childId].parentId, answers: Array.from(new Set([...followUpMap[childId].answers, answer])) }
+                            : { parentId: parentQ.id, answers: [answer] };
+                        });
+                      });
+                    }
+                  });
+
+                  const isVisible = (qId: string) => {
+                    const rule = followUpMap[qId];
+                    if (!rule) return true; // not a follow-up -> always visible
+                    const parentAnswer = patientData.responses[rule.parentId];
+                    return rule.answers.includes(parentAnswer);
+                  };
+
+                  return pageQuestions
+                    .filter(q => isVisible(q.id))
+                    .map(question => renderQuestion(question));
+                })()}
               </div>
             ) : currentPage === 4 && pageQuestions.length === 0 ? (
               <div className="bg-white rounded-xl shadow-lg p-8 text-center">
@@ -1002,8 +1268,8 @@ export default function MedicalIntakeForm() {
                 ) : (
                   <div>
                     ✅
-                    <h3 className="text-xl font-semibold text-black mb-2">No Symptom-Specific Questions</h3>
-                    <p className="text-black">Proceeding to results page.</p>
+                    <h3 className="text-xl font-semibold text-black mb-2">No Additional Questions</h3>
+                    <p className="text-black">All relevant questions have been answered. Proceeding to results page.</p>
                   </div>
                 )}
               </div>
@@ -1019,6 +1285,14 @@ export default function MedicalIntakeForm() {
               <h2 className="text-2xl font-bold text-black mb-2">Assessment Complete</h2>
               <p className="text-black">Your comprehensive medical intake has been completed.</p>
             </div>
+
+            {/* Auto-generate summary when reaching final page */}
+            {!finalAnalysis?.patientSummary && (
+              <div className="mb-6 text-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                <p className="text-gray-600">Generating your personalized summary...</p>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="bg-blue-50 rounded-lg p-6">
@@ -1036,13 +1310,19 @@ export default function MedicalIntakeForm() {
                 <h3 className="text-lg font-semibold text-black mb-4">Symptoms Summary</h3>
                 <div className="space-y-2">
                   {patientData.symptoms.filter(s => s.type).map((symptom, idx) => (
-                    <div key={idx} className="text-sm text-black">
-                      <p className="font-medium">
-                        {symptom.type.charAt(0).toUpperCase() + symptom.type.slice(1).replace('_', ' ')}
-                        <span className="ml-2 text-black">Severity: {symptom.severity}/10</span>
+                    <div key={idx} className="text-black py-2 border-b border-gray-200 last:border-b-0">
+                      <p className="font-semibold">
+                        {symptom.type.charAt(0).toUpperCase() + symptom.type.slice(1).replace(/_/g, ' ')}
                       </p>
-                      <p className="text-black">
-                        {symptom.frequency} • {symptom.durationNumber || 1} {symptom.durationUnit || 'day(s)'}
+                      <p className="text-sm mt-1">
+                        Severity: {symptom.severity}/10 ({getSeverityCategory(symptom.severity)})
+                      </p>
+                      <p className="text-sm mt-1">
+                        {(() => {
+                          const num = symptom.durationNumber || 1;
+                          const unit = formatUnit(symptom.durationUnit, num);
+                          return `Frequency: ${symptom.frequency} (${num} ${unit})`;
+                        })()}
                       </p>
                     </div>
                   ))}
@@ -1050,25 +1330,20 @@ export default function MedicalIntakeForm() {
               </div>
 
               <div className="bg-green-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-black mb-4">Health Metrics</h3>
+                <h3 className="text-lg font-semibold text-black mb-4">PHQ-9 Depression Screening</h3>
                 <div className="space-y-2 text-sm text-black">
-                  <p><strong>Sleep Quality:</strong> {patientData.healthMetrics.sleep.quality}/10</p>
-                  <p><strong>Hours per Night:</strong> {patientData.healthMetrics.sleep.hoursPerNight}</p>
-                  <p><strong>Overall Mood:</strong> {patientData.healthMetrics.mood.overall}/10</p>
-                  <p><strong>Stress Level:</strong> {patientData.healthMetrics.mood.stress}/10</p>
-                  <p><strong>Energy Level:</strong> {patientData.healthMetrics.energy.level}/10</p>
+                  <p><strong>Total Score:</strong> {Object.values(patientData.phq9.responses).reduce((sum, val) => sum + (val || 0), 0)}/27</p>
+                  <p><strong>Difficulty Level:</strong> {patientData.phq9.difficulty !== undefined ? 
+                    ['Not difficult at all', 'Somewhat difficult', 'Very difficult', 'Extremely difficult'][patientData.phq9.difficulty] : 'Not assessed'}</p>
                 </div>
               </div>
 
               <div className="bg-purple-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-black mb-4">Key Responses</h3>
+                <h3 className="text-lg font-semibold text-black mb-4">Overall Summary</h3>
                 <div className="space-y-2 text-sm max-h-48 overflow-y-auto">
-                  {Object.entries(patientData.responses).map(([questionId, answer]) => (
-                    <div key={questionId}>
-                      <p className="font-medium text-black">{questionId.replace('_', ' ').toUpperCase()}:</p>
-                      <p className="text-black mb-2">{answer}</p>
-                    </div>
-                  ))}
+                  <p className="text-black whitespace-pre-line">
+                    {finalAnalysis?.patientSummary || 'Generating summary...'}
+                  </p>
                 </div>
               </div>
             </div>
@@ -1081,21 +1356,24 @@ export default function MedicalIntakeForm() {
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="bg-white p-4 rounded-lg">
-                    <h4 className="font-semibold text-black mb-3">Potential Diagnoses</h4>
-                    <div className="space-y-2">
-                      {aiAnalysisData.potentialDiseases?.map((disease: string, idx: number) => (
-                        <div key={idx} className="text-sm text-black bg-red-50 p-2 rounded border-l-4 border-red-400">
-                          {disease}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="bg-white p-4 rounded-lg">
                     <h4 className="font-semibold text-black mb-3">Red Flags</h4>
                     <div className="space-y-2">
                       {aiAnalysisData.redFlags?.map((flag: string, idx: number) => (
-                        <div key={idx} className="text-sm text-black bg-yellow-50 p-2 rounded border-l-4 border-yellow-400">
+                        <div key={idx} className="text-sm text-black bg-red-50 p-2 rounded border-l-4 border-red-400">
                           ⚠️ {flag}
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-red-700 mt-2">
+                      If you experience any of the above warning signs or a sudden worsening of symptoms, please seek immediate medical care or call emergency services.
+                    </p>
+                  </div>
+                  <div className="bg-white p-4 rounded-lg">
+                    <h4 className="font-semibold text-black mb-3">Potential Diagnoses</h4>
+                    <div className="space-y-2">
+                      {aiAnalysisData.potentialDiseases?.map((disease: string, idx: number) => (
+                        <div key={idx} className="text-sm text-black bg-yellow-50 p-2 rounded border-l-4 border-yellow-400">
+                          {disease}
                         </div>
                       ))}
                     </div>
@@ -1161,12 +1439,7 @@ export default function MedicalIntakeForm() {
                       insurance: '', medicalId: ''
                     },
                     symptoms: [{ type: '', severity: 1, description: '', frequency: 'intermittent', duration: 'days', durationNumber: 1, durationUnit: 'day(s)' }],
-                    healthMetrics: {
-                      sleep: { quality: 5, hoursPerNight: 7 },
-                      mood: { overall: 5, stress: 5 },
-                      energy: { level: 5, fatigueFrequency: 'sometimes' },
-                      appetite: { level: 5, changes: 'no_change' }
-                    },
+                    phq9: { responses: {} },
                     responses: {}
                   });
                   setAiGeneratedQuestions([]);
@@ -1181,19 +1454,16 @@ export default function MedicalIntakeForm() {
       )}
 
         {/* Navigation */}
-        <div className="flex justify-between mt-8">
-          <button
-            onClick={prevPage}
-            disabled={currentPage === 0}
-            className={`flex items-center px-6 py-3 rounded-lg font-medium transition-all ${
-              currentPage === 0
-                ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                : 'bg-gray-600 text-white hover:bg-gray-700'
-            }`}
-          >
-            ⬅️
-            Previous
-          </button>
+        <div className={`flex mt-8 ${currentPage === 0 ? 'justify-start' : 'justify-between'}`}>
+          {currentPage > 0 && (
+            <button
+              onClick={prevPage}
+              className="flex items-center px-6 py-3 rounded-lg font-medium transition-all bg-gray-600 text-white hover:bg-gray-700"
+            >
+              ⬅️
+              Previous
+            </button>
+          )}
 
           <button
             onClick={nextPage}

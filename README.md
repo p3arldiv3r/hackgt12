@@ -6,12 +6,12 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 1. Copy the environment template:
 ```bash
-cp .env.example .env.local
+cp .env.example .env
 ```
 
 2. Get your OpenAI API key from [OpenAI Platform](https://platform.openai.com/api-keys)
 
-3. Update `.env.local` with your API key:
+3. Update `.env` with your API key:
 ```bash
 OPENAI_API_KEY=your_actual_api_key_here
 ```

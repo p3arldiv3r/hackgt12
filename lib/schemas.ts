@@ -9,7 +9,7 @@ export const SymptomType = z.enum([
   'pain',
   'fever',
   'cough',
-  'shortness_of_breath',
+  'shortness of breath',
   'other'
 ]);
 
@@ -19,10 +19,10 @@ export const PainLocation = z.enum([
   'chest',
   'back',
   'abdomen',
-  'left_arm',
-  'right_arm',
-  'left_leg',
-  'right_leg',
+  'left arm',
+  'right arm',
+  'left leg',
+  'right leg',
   'joints',
   'other'
 ]);
